@@ -1,0 +1,34 @@
+MODULE Kinds
+
+IMPLICIT NONE
+PUBLIC
+
+! ----------------------------------------
+! Integer precision kinds
+! ----------------------------------------
+INTEGER, PARAMETER :: I32 = SELECTED_INT_KIND(9)
+INTEGER, PARAMETER :: I64 = SELECTED_INT_KIND(18)
+
+
+! ----------------------------------------
+! Real precision kinds
+! ----------------------------------------
+INTEGER, PARAMETER :: SP = SELECTED_REAL_KIND(6, 37)
+INTEGER, PARAMETER :: DP = SELECTED_REAL_KIND(15, 307)
+
+! Working precision, change when desired
+INTEGER, PARAMETER :: WP = DP
+
+
+! ----------------------------------------
+! Physical and mathematical constants
+! ----------------------------------------
+REAL(WP), PARAMETER :: PI = 3.14159265358979323846_wp
+
+! Acoustic default properties of seawater
+REAL(WP), PARAMETER :: RHO_WATER = 1025.0_WP        ! [kg/m^3] Density
+REAL(WP), PARAMETER :: SPEED_OF_SOUND = 1500.0_WP   ! [m/s] Sound velocity
+REAL(WP), PARAMETER :: P_REF = 1.0E-6_WP            ! [Pa] Reference pressure
+
+
+END MODULE Kinds
