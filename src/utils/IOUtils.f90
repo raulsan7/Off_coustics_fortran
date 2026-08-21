@@ -714,9 +714,9 @@ END SUBROUTINE PARSE_CHANNELS_ASCII
 
 FUNCTION READ_CURVE(filename, ws, col_idx) RESULT(val)
     CHARACTER(len=*), INTENT(IN)        :: filename
-    REAL(WP), INTENT(IN)               :: ws        ! Velocidad del viento (m/s)
-    INTEGER(I32), INTENT(IN), OPTIONAL :: col_idx   ! Columna a evaluar (default = 2)
-    REAL(WP)                           :: val       ! Valor escalar interpolado
+    REAL(WP), INTENT(IN)               :: ws        ! [m/s] WIndSpeed
+    INTEGER(I32), INTENT(IN), OPTIONAL :: col_idx   ! [-] Column to evaluate
+    REAL(WP)                           :: val       ! [-] Interpolated scalar
 
     INTEGER(I32) :: fu, status, ios, n_rows, i, j, k, target_col
     CHARACTER(len=2048) :: line_buffer
@@ -733,11 +733,11 @@ FUNCTION READ_CURVE(filename, ws, col_idx) RESULT(val)
         return
     end if
 
-    ! Omitir la primera línea (cabecera del CSV)
+    ! Skip header
     read(fu, '(A)', iostat=status) line_buffer
     if (status /= 0) then; close(fu); return; end if
 
-    ! Contar filas de datos
+    ! Count rows
     n_rows = 0
     do
         read(fu, '(A)', iostat=ios) line_buffer
@@ -754,15 +754,15 @@ FUNCTION READ_CURVE(filename, ws, col_idx) RESULT(val)
     allocate(var_array(n_rows))
     allocate(row_buff(target_col))
 
-    ! Leer y parsear datos
+    ! Read and parse data
     rewind(fu)
-    read(fu, '(A)') line_buffer ! Omitir cabecera
+    read(fu, '(A)') line_buffer ! Skip header
 
     do i = 1, n_rows
         read(fu, '(A)', iostat=ios) line_buffer
         if (ios /= 0) exit
         
-        ! Reemplazar comas por espacios para parseo limpio
+        ! Replace commas for blank spaces
         do j = 1, len_trim(line_buffer)
             if (line_buffer(j:j) == ',') line_buffer(j:j) = ' '
         end do
@@ -774,7 +774,7 @@ FUNCTION READ_CURVE(filename, ws, col_idx) RESULT(val)
 
     close(fu)
 
-    ! --- Interpolación Lineal con Extrapolación ---
+    ! Linear interpolation with extrapolation
     if (ws <= ws_array(1)) then
         k = 1
     else if (ws >= ws_array(n_rows)) then
