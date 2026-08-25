@@ -1,0 +1,353 @@
+MODULE WindTurbine
+
+    
+USE, INTRINSIC :: iso_fortran_env
+USE Kinds
+
+IMPLICIT NONE
+PRIVATE
+PUBLIC :: WindTurbine_t, init
+
+! ------------------
+! Abstract base type
+! ------------------
+TYPE, ABSTRACT :: WindTurbine_t
+    ! --- Input parameters --- !
+    LOGICAL                       :: debug = .false.                ! [-] Using debug mode will print aditional data
+    CHARACTER(len=:), ALLOCATABLE :: rootname                       ! [-] Name without extensions of the OpenFAST output files
+    REAL(WP)                      :: WindSpeed = 0.0_WP             ! [m/s] Wind Speed in norm
+    REAL(WP)                      :: WindDir = 0.0_WP               ! [deg] Wind direction 0 deg points to +x axis (anticlockwise from +x)
+    REAL(WP)                      :: Depth = 0.0_WP                 ! [m] Water depth
+    REAL(WP)                      :: AxisPos(2) = [0.0_WP, 0.0_WP]  ! [m] Position of the turbine axis in xy plane
+    REAL(WP)                      :: BariPos(2) = [0.0_WP, 0.0_WP]  ! [m] Position of the turbine baricenter in xy plane
+    INTEGER(I32)                  :: Nmembers = 0                   ! [-] Number of structural members in the OpenFAST model
+    INTEGER(I32)                  :: Nnodes = 0                     ! [-] Number of structural nodes in the OpenFAST model
+
+    ! --- Derived attirbutes --- !
+    CHARACTER(len=:), ALLOCATABLE :: case_type                      ! [-] Tag that identifies case type
+    LOGICAL                       :: in_farm = .false.              ! [-] Wheter current turbine is within a farm
+    REAL(WP), ALLOCATABLE         :: Freqs(:)                       ! [Hz] Frequency array (Nfreqs)
+    REAL(WP), ALLOCATABLE         :: F(:,:,:)                       ! [N] Force array (Nfreqs, Nnodes_wet, 3)
+    REAL(WP), ALLOCATABLE         :: x_all(:,:,:)                   ! [m] All nodes array (Nmembers, Nnodes, 3)
+    REAL(WP), ALLOCATABLE         :: x(:,:)                         ! [m] Wetted nodes list (Nnodes_wet, 3)
+    REAL(WP), ALLOCATABLE         :: time(:)                        ! [s] Time array
+    REAL(WP), ALLOCATABLE         :: acc(:,:,:,:)                   ! [m/s^2] Acceleration array (NFreqs, Nmembers, Nnodes, 3)
+    LOGICAL                       :: BariPos_set = .false.          ! [-] Wheter baricenter is inputed
+
+    ! --- Acoustic Solver placeholder --- !
+    CLASS(*), ALLOCATABLE :: acoustic_solver
+
+    ! --- File paths ---
+    CHARACTER(len=:), ALLOCATABLE :: outfile                        ! [-] OpenFast output file path .outb/.out
+    CHARACTER(len=:), ALLOCATABLE :: SUM_SubDyn                     ! [-] SubDyn summary file path
+    CHARACTER(len=:), ALLOCATABLE :: save_path                      ! [-] Acoustic output file
+
+
+    CONTAINS
+    ! --- Public type-bound procedures --- !
+    PROCEDURE :: init                           ! Constructor
+    PROCEDURE :: read_input                     ! Reads OpenFast outputs
+    PROCEDURE :: translate_align_with_WindDir   ! Place nodes correctly
+    ! PROCEDURE :: check_observers_distances      ! Helper for run subroutines
+    ! PROCEDURE :: save_parameters                ! Saves turbine parameters to save_path
+    ! PROCEDURE :: save_acoustics                 ! Saves acoustics to save_path
+    ! PROCEDURE :: set_acoustic_method            ! Selects which acoustic solver to use
+    ! PROCEDURE :: check_acoustic_solver          ! Helper for run subroutines
+    ! PROCEDURE :: run_spectrums                  ! Subroutines to compute acoustic pressure
+    ! PROCEDURE :: run_polar
+    ! PROCEDURE :: run_cylinder
+    ! PROCEDURE :: run_decay
+    ! PROCEDURE :: run_line
+    ! PROCEDURE :: run_sliceXY
+    ! PROCEDURE :: run_sliceXZ
+    ! PROCEDURE :: run_sphere
+    ! PROCEDURE :: run_all
+
+    ! --- Deferred(abstract) procedures --- !
+    ! PROCEDURE(compute_force)                , DEFERRED :: compute_force
+    ! PROCEDURE(compute_mass)                 , DEFERRED :: compute_mass
+    ! PROCEDURE(filter_frequencies)           , DEFERRED :: filter_frequencies
+    ! PROCEDURE(get_impedance_corrected_force), DEFERRED :: get_impedance_corrected_force
+
+END TYPE WindTurbine_t
+
+! --------------------------------------------------
+! Abstract interfaces for deferred(abstract) methods
+! --------------------------------------------------
+! Compute force
+ABSTRACT INTERFACE
+    SUBROUTINE compute_force(self, filter_freqs, verbose, skipf)
+        IMPORT :: WindTurbine_t
+        CLASS(WindTurbine_t), INTENT(INOUT) :: self
+        LOGICAL             , INTENT(IN)    :: filter_freqs
+        LOGICAL             , INTENT(IN)    :: verbose
+        LOGICAL             , INTENT(IN)    :: skipf
+    END SUBROUTINE compute_force
+END INTERFACE
+
+! Compute mass
+ABSTRACT INTERFACE
+    SUBROUTINE compute_mass(self, mass, added_mass)
+        IMPORT :: WindTurbine_t, WP
+        CLASS(WindTurbine_t) , INTENT(INOUT):: self
+        REAL(WP), ALLOCATABLE, INTENT(OUT) :: mass(:)
+        REAL(WP), ALLOCATABLE, INTENT(OUT) :: added_mass(:)
+    END SUBROUTINE compute_mass
+END INTERFACE
+
+! Filter frequencies
+ABSTRACT INTERFACE
+    FUNCTION filter_frequencies(self) RESULT(mask)
+        IMPORT :: WindTurbine_t, WP
+        CLASS(WindTurbine_t), INTENT(INOUT) :: self
+        LOGICAL, ALLOCATABLE                :: mask
+    END FUNCTION filter_frequencies
+END INTERFACE
+
+! Impedance correction
+ABSTRACT INTERFACE
+    FUNCTION get_impedance_corrected_force(self, c_wat) RESULT(corrected_force)
+        IMPORT :: WindTurbine_t, WP
+        CLASS(WindTurbine_t), INTENT(INOUT) :: self
+        REAL(WP), INTENT(IN) :: c_wat
+        COMPLEX(WP), ALLOCATABLE :: corrected_force(:,:,:)
+    END FUNCTION get_impedance_corrected_force
+END INTERFACE
+
+
+CONTAINS
+
+SUBROUTINE init(self, debug, rootname, output_dir, save_dir, save_name, &
+                WindSpeed, WindDir, Depth, AxisPos, BariPos, Binary, &
+                Nmembers, Nnodes)
+    CLASS(WindTurbine_t), INTENT(INOUT) :: self
+    LOGICAL         , INTENT(IN), OPTIONAL :: debug
+    CHARACTER(len=*), INTENT(IN), OPTIONAL :: rootname
+    CHARACTER(len=*), INTENT(IN), OPTIONAL :: output_dir
+    CHARACTER(len=*), INTENT(IN), OPTIONAL :: save_dir
+    CHARACTER(len=*), INTENT(IN), OPTIONAL :: save_name
+    REAL(WP)        , INTENT(IN), OPTIONAL :: WindSpeed
+    REAL(WP)        , INTENT(IN), OPTIONAL :: WindDir
+    REAL(WP)        , INTENT(IN), OPTIONAL :: Depth
+    REAL(WP)        , INTENT(IN), OPTIONAL :: AxisPos(2)
+    REAL(WP)        , INTENT(IN), OPTIONAL :: BariPos(2)
+    LOGICAL         , INTENT(IN), OPTIONAL :: Binary
+    INTEGER(I32)    , INTENT(IN), OPTIONAL :: Nmembers
+    INTEGER(I32)    , INTENT(IN), OPTIONAL :: Nnodes
+
+    ! Local variables
+    CHARACTER(len=:), ALLOCATABLE :: output_dir_, save_dir_, ext
+    CHARACTER(len=:), ALLOCATABLE :: outfile_path, sum_path, save_path_temp
+
+
+    ! Self assignment: scalar
+    if (PRESENT(debug))     self%debug     = debug
+    if (PRESENT(WindSpeed)) self%WindSpeed = WindSpeed
+    if (PRESENT(WindDir))   self%WindDir   = WindDir
+    if (PRESENT(Depth))     self%Depth     = Depth
+    if (PRESENT(Nmembers))  self%Nmembers  = Nmembers
+    if (PRESENT(Nnodes))    self%Nnodes    = Nnodes
+
+    ! Self assignement: array
+    if (PRESENT(AxisPos)) then
+        self%AxisPos = AxisPos
+    else
+        self%AxisPos = [0.0_WP, 0.0_WP]
+    end if
+
+    if (PRESENT(BariPos)) then
+        self%BariPos = BariPos
+        self%Baripos_set = .true.
+    else
+        self%BariPos = [0.0_WP, 0.0_WP]
+    end if
+
+    ! Directory paths and file extension
+    if (.not. PRESENT(rootname)) then
+        error stop "WindTurbine_t $ init: rootname argument is required"
+    end if
+    self%rootname = rootname
+
+    if (PRESENT(output_dir)) then
+        output_dir_ = trim(output_dir)
+    else
+        output_dir_ = "../OP_output/"
+    end if
+
+    if (PRESENT(save_dir)) then
+        save_dir_ = save_dir
+    else 
+        save_dir_ = "./turbine_acoustic_data/"
+    end if
+
+    if (PRESENT(Binary)) then
+        if (Binary) then
+            ext = ".outb"
+        else 
+            ext = ".out"
+        end if
+    else
+        ext = ".outb"
+    end if
+
+    ! Build file paths
+    outfile_path = trim(output_dir_) // trim(self%rootname) // trim(ext)
+    sum_path     = trim(output_dir_) // trim(self%rootname) // ".SD.sum.yaml"
+
+    if (PRESENT(save_name)) then
+        save_path_temp = trim(save_dir_) // trim(save_name) // ".hdf5"
+    else
+        save_path_temp = trim(save_dir) ! If no save_name, store only the directory; save_acoustics will check suffix.
+    end if
+
+    self%outfile    = outfile_path
+    self%SUM_SubDyn = sum_path
+    self%save_path  = save_path_temp
+
+    ! Other attibutes are left unallocated (case_type, Freqs, F ...)
+    ! They will be set during read_input or compute_force
+
+END SUBROUTINE init
+
+
+SUBROUTINE read_input(self, in_farm, verbose, skip, From, Upto)
+    USE IOUtils, ONLY: get_SDsum_variables, read_input_SD
+
+    CLASS(WindTurbine_t), INTENT(INOUT)        :: self
+    LOGICAL             , INTENT(IN), OPTIONAL :: in_farm
+    LOGICAL             , INTENT(IN), OPTIONAL :: verbose
+    INTEGER(I32)        , INTENT(IN), OPTIONAL :: skip
+    REAL(WP)            , INTENT(IN), OPTIONAL :: From
+    REAL(WP)            , INTENT(IN), OPTIONAL :: Upto
+
+    ! Local variables
+    LOGICAL :: in_farm_ = .false., verbose_ = .false., dir_exists
+    INTEGER(I32) :: skip_ = 1, iostat, status
+    REAL(WP) :: From_ = 0.0_WP, Upto_ = 1.0_WP, dt
+    CHARACTER(len=:), ALLOCATABLE :: dir
+    CHARACTER(len=16) :: unit
+
+    ! Defaults
+    if (PRESENT(in_farm)) in_farm_ = in_farm
+    if (PRESENT(verbose)) verbose_ = verbose
+    if (PRESENT(skip))    skip_    = skip
+    if (PRESENT(From))    From_    = From
+    if (PRESENT(Upto))    Upto_    = Upto
+    if (PRESENT(in_farm)) in_farm_ = in_farm
+    self % in_farm = in_farm_
+
+    ! Create directories if needed
+    if (len_trim(self % save_path) > 0) then
+        ! Determine if save_path is a file or directory
+        ! If it ends with '.hdf5' or '.npz', extract parent directory
+        if (index(self % save_path, '.', back = .true.) > 0) then
+            dir = self % save_path(1:index(self % save_path, '/', back = .true.)-1)
+        else
+            dir = trim(self % save_path)
+        end if
+        inquire(file=dir, exist=dir_exists)
+        if (.not. dir_exists) then
+            CALL execute_command_line('mkdir -p ' // trim(dir), exitstat=iostat)
+            if (iostat /= 0)  error stop "WindTurbine % read_input: could not create directory " // trim(dir)
+        end if
+    end if
+
+    ! Load initial positions from SubDyn summary file
+    if (self % Nmembers > 0 .and. self % Nnodes >0) then
+        CALL get_SDsum_variables(SD_path=self%SUM_SubDyn, Nmembers=self%Nmembers, &
+                                 Nnodes=self%Nnodes, verbose=verbose_, Nodes=self%x_all)
+        CALL read_input_SD(filename=self%outfile, what='acceleration', skip=skip_,Nmembers=self%Nmembers, &
+                           Nnodes=self%Nnodes, From=From_, Upto=Upto_, verbose=verbose_, Time_out=self%time, &
+                           Array_out=self%acc, unit_out=unit, status=status)
+    else 
+        error stop "WindTurbine % read_input: Nmembers and Nnodes must be positive integers to read SubDyn nodes"
+    end if
+
+    ! Compute baricenter if not provided
+    if (.not. self % BariPos_set) then
+        self % BariPos(1) = sum(self%x_all(:,:,1)) / real(self%Nmembers * self%Nnodes, WP)
+        self % BariPos(2) = sum(self%x_all(:,:,2)) / real(self%Nmembers * self%Nnodes, WP)
+        self % BariPos_set = .true.
+    end if
+
+    ! Align with wind direction and translate to axis position
+    CALL self % translate_align_with_WindDir()
+
+    ! Verbose summary
+    if (verbose_) then
+        dt = self%Time(2) - self%Time(1)
+        print*,''
+        print '(A)', repeat('=', 70)
+        print '(A)', 'TURBINE: ' // trim(self%rootname)
+        print '(A)', repeat('-', 68)
+        print '(A, A)',  'Type: ', trim(self%case_type)
+        print '(A, F5.1, A, F5.1, A)', 'Wind Speed: ', self%WindSpeed, ' m/s   | Wind Direction: ', self%WindDir, ' deg'
+        print '(A, F4.1, A, F4.1, A, F4.1, A)', 'Water Depth: ', self%Depth,&
+         ' m   | Position: (', self%AxisPos(1), ', ', self%AxisPos(2), ') m'
+        print '(A, I6, A, F6.4, A)', 'Time Series: ', size(self%Time), ' samples @ ', dt, ' s/sample'
+        print '(A)', repeat('=', 70)
+    end if
+
+    
+END SUBROUTINE read_input
+
+SUBROUTINE translate_align_with_WindDir(self)
+    CLASS(WindTurbine_t), INTENT(INOUT) :: self
+
+    ! Local variables
+    REAL(WP) :: yaw, c, s
+    REAL(WP) :: R2(2,2), R3(3,3), axis_xy(2)
+    INTEGER(I32) :: i,j,m,n
+    REAL(WP) :: temp(1,3), temp2(1,2)
+
+    ! Rotation angle in radians
+    yaw = self % WindDir * PI/180.0_WP
+    c   = cos(yaw)
+    s   = sin(yaw)
+
+    ! 2D rotation matrix (XY Plane)
+    R2(1,1) = c; R2(1,2) = -s
+    R2(2,1) = s; R2(2,2) = c
+
+    ! 3D rotation matrix
+    R3 = 0.0_WP; R3(3,3) = 1.0_WP
+    R3(1,1) =  c; R3(1,2) = -s
+    R3(2,1) =  s; R3(2,2) =  c
+
+    axis_xy = self % AxisPos
+
+    ! Rotate accelerations around origin (3D rotation)
+    if (ALLOCATED(self%acc)) then
+        do i = 1, size(self%acc, 1)      ! Nt
+            do m = 1, size(self%acc, 2)  ! Nmembers
+                do n = 1, size(self%acc, 3)  ! Nnodes
+                    temp = matmul(reshape(self%acc(i,m,n,:), [1,3]), transpose(R3))
+                    self%acc(i,m,n,:) = temp(1,:)
+                end do
+            end do
+        end do
+    end if
+
+    ! Rotate and translate node coordinates in x_all
+    if (ALLOCATED(self%x_all)) then
+        do i = 1, size(self%x_all, 1)
+            do j = 1, size(self%x_all, 2)
+                temp = matmul(reshape(self%x_all(i,j,1:3), [1,3]), transpose(R3))
+                ! apply translation only to x,y components
+                temp(1,1:2) = temp(1,1:2) + axis_xy
+                self%x_all(i,j,1:3) = temp(1,:)
+            end do
+        end do
+    end if
+
+    ! Rotate and translate baricenter (2D rotation + translation)
+    temp2 = matmul(reshape(self%BariPos, [1,2]), transpose(R2))
+    self%BariPos(1:2) = temp2(1,:) + axis_xy
+
+END SUBROUTINE translate_align_with_WindDir
+
+
+
+
+
+END MODULE WindTurbine

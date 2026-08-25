@@ -4,12 +4,12 @@ USE KINDS
 IMPLICIT NONE
 PRIVATE
 
-PUBLIC :: GET_SDSUM_VARIABLES, READ_INPUT_SD, READ_CURVE
+PUBLIC :: get_SDsum_variables, read_input_SD, read_curve, format_elapsed
 
 CONTAINS
 
 
-SUBROUTINE GET_SDSUM_VARIABLES(SD_path, Nmembers, Nnodes, verbose, Nodes)
+SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
     USE, INTRINSIC :: IEEE_ARITHMETIC, ONLY: IEEE_VALUE, IEEE_QUIET_NAN
 
     CHARACTER(len=*), INTENT(IN)           :: SD_path       ! [-] Path to OpenFAST SubDyn sum file
@@ -42,7 +42,7 @@ SUBROUTINE GET_SDSUM_VARIABLES(SD_path, Nmembers, Nnodes, verbose, Nodes)
     nan_val = ieee_value(1.0_wp, ieee_quiet_nan)
     status = 0
 
-    if (verbose_) print *, "reading SD.sum in ", trim(SD_path)
+    if (verbose_) print *, "Reading SD.sum nodes in ", trim(SD_path)
 
     ALLOCATE(Nodes(Nmembers_, Nnodes_,3), source=0.0_WP)
     ALLOCATE(member_nodes(Nmembers_, Nnodes_), source=0_I32)
@@ -74,7 +74,7 @@ SUBROUTINE GET_SDSUM_VARIABLES(SD_path, Nmembers, Nnodes, verbose, Nodes)
     ! Parse node IDs for each member
     do i = 1, Nmembers_
         read(file_unit, '(A)') line_buf
-        CALL PARSE_MEMBER_NODES(line_buf, Nnodes_, member_nodes(i,:))
+        CALL parse_member_nodes(line_buf, Nnodes_, member_nodes(i,:))
     end do
 
     ! ----------------------------------------------
@@ -98,8 +98,7 @@ SUBROUTINE GET_SDSUM_VARIABLES(SD_path, Nmembers, Nnodes, verbose, Nodes)
 
     ! read the number of nodes (e.g., "Nodes: # 33 x 9")
     read(file_unit, '(A)') line_buf
-    num_nodes = EXTRACT_NUMBER_NODES(line_buf)
-    read(file_unit, '(A)') line_buf ! Skip dummy header line
+    num_nodes = extract_number_nodes(line_buf)
 
     ALLOCATE(Nodes_flat(num_nodes,3), source=0.0_WP)
 
@@ -108,7 +107,7 @@ SUBROUTINE GET_SDSUM_VARIABLES(SD_path, Nmembers, Nnodes, verbose, Nodes)
     ! Extract only the content between '[' and ']' before the numeric READ,
     ! so the leading '-' YAML list marker never gets fed to the parser
     ! (removing it globally would corrupt negative coordinate values).
-    do i = 1, num_nodes-1
+    do i = 1, num_nodes
         read(file_unit, '(A)') line_buf
 
         pos_open  = INDEX(line_buf, '[')
@@ -159,10 +158,10 @@ SUBROUTINE GET_SDSUM_VARIABLES(SD_path, Nmembers, Nnodes, verbose, Nodes)
     end do
 
 
-END SUBROUTINE GET_SDSUM_VARIABLES
+END SUBROUTINE get_SDsum_variables
 
 
-SUBROUTINE READ_INPUT_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, verbose, &
+SUBROUTINE read_input_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, verbose, &
                          Time_out, Array_out, unit_out, status)
     CHARACTER(len=*), INTENT(IN)           :: filename          ! [-] Path to OpenFAST output file
     CHARACTER(len=*), INTENT(IN), OPTIONAL :: what              ! [-] Name of the output to read
@@ -173,10 +172,10 @@ SUBROUTINE READ_INPUT_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, ver
     REAL(WP)        , INTENT(IN), OPTIONAL :: Upto              ! [-] End window fraction
     LOGICAL         , INTENT(IN), OPTIONAL :: verbose           ! [-] Flag to print info
 
-    REAL(WP), ALLOCATABLE, INTENT(INOUT) :: Time_out(:)         ! [s] Downsampled time array (nt)
-    REAL(WP), ALLOCATABLE, INTENT(INOUT) :: Array_out(:,:,:,:)  ! [unit] Data tensor (nt, Nmembers, Nnodes, 3)
-    CHARACTER(len=*)     , INTENT(OUT)   :: unit_out            ! [-] Physical unit
-    INTEGER(I32)         , INTENT(OUT)   :: status
+    REAL(WP), ALLOCATABLE, INTENT(OUT) :: Time_out(:)           ! [s] Downsampled time array (nt)
+    REAL(WP), ALLOCATABLE, INTENT(OUT) :: Array_out(:,:,:,:)    ! [unit] Data tensor (nt, Nmembers, Nnodes, 3)
+    CHARACTER(len=*)     , INTENT(OUT) :: unit_out              ! [-] Physical unit
+    INTEGER(I32)         , INTENT(OUT) :: status
 
     ! Local Defaults Variables
     CHARACTER(len=32) :: what_ = "acceleration"
@@ -253,7 +252,7 @@ SUBROUTINE READ_INPUT_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, ver
     ! -------------------------------------------------------------
     ! 3. Call the Universal OpenFAST Parser
     ! -------------------------------------------------------------
-    CALL PARSE_CHANNELS_AUTO(full_path=filename, plotChannels=out_channels, &
+    CALL parse_channels_auto(full_path=filename, plotChannels=out_channels, &
                              From=From_, Upto=Upto_,              &
                              available_channels=.false., verbose=verbose_,     &
                              time_out=raw_time, array_out=raw_array,        &
@@ -290,10 +289,10 @@ SUBROUTINE READ_INPUT_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, ver
     ! Extract unit from the first valid channel
     unit_out = raw_units(1)
 
-END SUBROUTINE READ_INPUT_SD
+END SUBROUTINE read_input_SD
 
 
-SUBROUTINE PARSE_CHANNELS_AUTO(full_path, plotChannels, From, Upto, &
+SUBROUTINE parse_channels_auto(full_path, plotChannels, From, Upto, &
                                available_channels, verbose, chunk_size,     &
                                time_out, array_out, units_out, status)
     CHARACTER(len=*), INTENT(IN)           :: full_path
@@ -324,7 +323,7 @@ SUBROUTINE PARSE_CHANNELS_AUTO(full_path, plotChannels, From, Upto, &
     ext_idx = index(full_path, '.outb', back=.true.)
     if (ext_idx > 0 .and. ext_idx == len_trim(full_path) - 4) then
         if (verb) print *, "Detected binary OpenFAST output (.outb): ", trim(full_path)
-        CALL PARSE_CHANNELS_BINARY(full_path, plotChannels, From_, Upto_, &
+        CALL parse_channels_binary(full_path, plotChannels, From_, Upto_, &
                                    avail_ch, verb, c_size, time_out, array_out, units_out, status)
     else
         ext_idx = index(full_path, '.out', back=.true.)
@@ -338,10 +337,10 @@ SUBROUTINE PARSE_CHANNELS_AUTO(full_path, plotChannels, From, Upto, &
         end if
     end if
 
-END SUBROUTINE PARSE_CHANNELS_AUTO
+END SUBROUTINE parse_channels_auto
 
 
-SUBROUTINE PARSE_CHANNELS_BINARY(full_path, plotChannels, From_val, Upto_val, &
+SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
                                  available_channels, verbose, chunk_size,     &
                                  time_out, array_out, units_out, status)
     CHARACTER(len=*), INTENT(IN)               :: full_path
@@ -538,10 +537,10 @@ SUBROUTINE PARSE_CHANNELS_BINARY(full_path, plotChannels, From_val, Upto_val, &
     end if
 
 
-END SUBROUTINE PARSE_CHANNELS_BINARY
+END SUBROUTINE parse_channels_binary
 
 
-SUBROUTINE PARSE_CHANNELS_ASCII(full_path, plotChannels, From_val, Upto_val, &
+SUBROUTINE parse_channels_ascii(full_path, plotChannels, From_val, Upto_val, &
                                 available_channels, verbose, time_out,       &
                                 array_out, units_out, status)
     CHARACTER(len=*), INTENT(IN)               :: full_path
@@ -712,7 +711,7 @@ SUBROUTINE PARSE_CHANNELS_ASCII(full_path, plotChannels, From_val, Upto_val, &
 END SUBROUTINE PARSE_CHANNELS_ASCII
 
 
-FUNCTION READ_CURVE(filename, ws, col_idx) RESULT(val)
+FUNCTION read_curve(filename, ws, col_idx) RESULT(val)
     CHARACTER(len=*), INTENT(IN)        :: filename
     REAL(WP), INTENT(IN)               :: ws        ! [m/s] WIndSpeed
     INTEGER(I32), INTENT(IN), OPTIONAL :: col_idx   ! [-] Column to evaluate
@@ -798,14 +797,14 @@ FUNCTION READ_CURVE(filename, ws, col_idx) RESULT(val)
 
     val = var_array(k) + t * (var_array(k+1) - var_array(k))
 
-END FUNCTION READ_CURVE
+END FUNCTION read_curve
 
 
 ! -------------------- !
-! HELPERS FUNCTIONS
+! HELPER FUNCTIONS
 ! -------------------- !
 
-SUBROUTINE PARSE_MEMBER_NODES(text_line, max_nodes, node_arr)
+SUBROUTINE parse_member_nodes(text_line, max_nodes, node_arr)
     CHARACTER(len=*), INTENT(IN) :: text_line           ! [-] Line read in SD.sum.yaml
     INTEGER(I32)    , INTENT(IN) :: max_nodes           ! [-] Amount of nodes per member and line
 
@@ -840,7 +839,7 @@ SUBROUTINE PARSE_MEMBER_NODES(text_line, max_nodes, node_arr)
                 in_token = .false.
                 n_tokens = n_tokens + 1
                 if (n_tokens > max_tokens) then
-                    print*,'Error in PARSE_MEMBER_NODES: too many tokens in line (limit ', &
+                    print*,'Error in parse_member_nodes: too many tokens in line (limit ', &
                                 MAX_TOKENS, '): ', TRIM(text_line)
                     stop 1
 
@@ -855,7 +854,7 @@ SUBROUTINE PARSE_MEMBER_NODES(text_line, max_nodes, node_arr)
     if (in_token) then
         n_tokens = n_tokens + 1
         if (n_tokens > max_tokens) then
-            print *, 'Error in PARSE_MEMBER_NODES: too many tokens in line (limit ', &
+            print *, 'Error in parse_member_nodes: too many tokens in line (limit ', &
                         MAX_TOKENS, '): ', TRIM(text_line)
             stop 1
         end if
@@ -864,7 +863,7 @@ SUBROUTINE PARSE_MEMBER_NODES(text_line, max_nodes, node_arr)
 
     ! Fast fall validation
     if (n_tokens < max_nodes) then
-        print *, 'Error in PARSE_MEMBER_NODES: line has only ', n_tokens, &
+        print *, 'Error in parse_member_nodes: line has only ', n_tokens, &
                     ' tokens, but max_nodes = ', max_nodes, '. Line: ', TRIM(text_line)
         stop 1
     end if
@@ -873,16 +872,16 @@ SUBROUTINE PARSE_MEMBER_NODES(text_line, max_nodes, node_arr)
     do i = 1, max_nodes
         read(tokens(n_tokens - max_nodes + i), *, IOSTAT=ierr) node_arr(i)
         if (ierr /= 0) then
-            print *, 'Error in PARSE_MEMBER_NODES: could not parse token "', &
+            print *, 'Error in parse_member_nodes: could not parse token "', &
                         TRIM(tokens(n_tokens - max_nodes + i)), '" as integer. Line: ', TRIM(text_line)
             stop 1
         end if
     end do
 
-END SUBROUTINE PARSE_MEMBER_NODES
+END SUBROUTINE parse_member_nodes
 
 
-FUNCTION EXTRACT_NUMBER_NODES(text_line) RESULT(number_of_nodes)
+FUNCTION extract_number_nodes(text_line) RESULT(number_of_nodes)
     IMPLICIT NONE
     CHARACTER(len=*), INTENT(IN) :: text_line          ! [-] Line read in SD.sum.yaml, e.g. "Nodes: # 33 x 9"
 
@@ -896,13 +895,13 @@ FUNCTION EXTRACT_NUMBER_NODES(text_line) RESULT(number_of_nodes)
     ! Locate the '#' and the 'x' that follow it
     pos_hash = INDEX(text_line, '#')
     if (pos_hash == 0) then
-        print *, 'ERROR in EXTRACT_NUMBER_NODES: no "#" found in line: ', TRIM(text_line)
+        print *, 'ERROR in extract_number_nodes: no "#" found in line: ', TRIM(text_line)
         stop 1
     end if
 
     pos_x = INDEX(text_line(pos_hash+1:), 'x')
     if (pos_x == 0) then
-        print *, 'ERROR in EXTRACT_NUMBER_NODES: no "x" found after "#" in line: ', TRIM(text_line)
+        print *, 'ERROR in extract_number_nodes: no "x" found after "#" in line: ', TRIM(text_line)
         stop 1
     end if
     pos_x = pos_x + pos_hash   ! convert back to index within the full string
@@ -912,12 +911,39 @@ FUNCTION EXTRACT_NUMBER_NODES(text_line) RESULT(number_of_nodes)
 
     read(between_str, *, IOSTAT=ierr) number_of_nodes
     if (ierr /= 0) then
-        print *, 'ERROR in EXTRACT_NUMBER_NODES: could not parse "', TRIM(ADJUSTL(between_str)), &
+        print *, 'ERROR in extract_number_nodes: could not parse "', TRIM(ADJUSTL(between_str)), &
                     '" as integer. Line: ', TRIM(text_line)
         stop 1
     end if
 
-END FUNCTION EXTRACT_NUMBER_NODES
+END FUNCTION extract_number_nodes
+
+SUBROUTINE format_elapsed(start_time, elapsed_display, tag)
+    ! Returns elapsed time since start_time and a human-friendly unit tag
+    REAL(WP), INTENT(IN)  :: start_time
+    REAL(WP), INTENT(OUT) :: elapsed_display
+    CHARACTER(len=*), INTENT(OUT) :: tag
+
+    REAL(WP) :: end_time, elapsed_time
+
+    CALL cpu_time(end_time)
+    elapsed_time = end_time - start_time
+
+    elapsed_display = elapsed_time
+    if (elapsed_display > 60.0_WP .and. elapsed_display <= 3600.0_WP) then
+        elapsed_display = elapsed_display / 60.0_WP
+        tag = "min"
+    elseif (elapsed_display > 3600.0_WP .and. elapsed_display <= 86400.0_WP) then
+        elapsed_display = elapsed_display / 3600.0_WP
+        tag = "h"
+    elseif (elapsed_display > 86400.0_WP) then
+        elapsed_display = elapsed_display / 86400.0_WP
+        tag = "days"
+    else
+        tag = "s"
+    end if
+
+END SUBROUTINE format_elapsed
 
 
 END MODULE IOUtils

@@ -2,51 +2,53 @@ PROGRAM MAIN
 
 USE Kinds
 USE IOUtils
+USE WindTurbine
+USE TurbineTypes
 
 IMPLICIT NONE
 
 ! Local variables
 CHARACTER(len=*), PARAMETER :: SD_path = "../OP_output/DTU_DeltaWind_mn_ws11.4.SD.sum.yaml"
 CHARACTER(len=*), PARAMETER :: OP_path = "../OP_output/DTU_DeltaWind_mn_ws11.4.outb"
-INTEGER(I32), PARAMETER :: Nm = 8, Nn=5
+INTEGER(I32)    , PARAMETER :: Nm = 8, Nn=5
 
-! Variables for SubDyn node geometry
-REAL(WP), ALLOCATABLE :: Nodes(:,:,:)
+TYPE(DTU10MWMonopile) :: monopile
 
-! Variables to receive READ_INPUT_SD outputs
-REAL(WP), ALLOCATABLE :: time_array(:)
-REAL(WP), ALLOCATABLE :: sd_tensor(:,:,:,:)
-CHARACTER(len=32)     :: unit_label
-INTEGER(I32)          :: status
+REAL(WP) :: start_time, end_time, elapsed_time
+REAL(WP) :: elapsed_display
+CHARACTER(len=8) :: tag
 
-! INTEGER(I32) :: i, j
 
+CALL cpu_time(start_time)
 ! ---------------------------------------------------------
 ! 1. Initialization and Banner
 ! ---------------------------------------------------------
-print *, "==================================================="
-print *, " OFF-Coustics: Offshore Acoustic Simulator         "
-print *, " Version: 0.1.0 (HPC Fortran Edition)              "
-print *, "==================================================="
-print *, "-> Precision (wp) initialized."
-print *, "-> Environment:"
-print '(A, F0.2, A)', "   * Water Density : ", RHO_WATER, " kg/m^3"
-print '(A, F0.2, A)', "   * Sound Speed   : ", SPEED_OF_SOUND, " m/s"
-print *, "---------------------------------------------------"
+CALL monopile % init( &
+        rootname  = "DTU_DeltaWind_mn_ws11.4", &
+        output_dir= "../OP_output/", &
+        save_dir  = "./turbine_acoustic_data/", &
+        WindSpeed = 11.4_dp, &
+        WindDir   = 45.0_dp, &
+        Depth     = 30.0_dp, &
+        Nmembers  = 8, &
+        Nnodes    = 5, &
+        debug    = .true. )
+
+CALL monopile % read_input(verbose=.true.)
+
+! print *, "==================================================="
+! print *, " OFF-Coustics: Offshore Acoustic Simulator         "
+! print *, " Version: 0.1.0 (HPC Fortran Edition)              "
+! print *, "==================================================="
+! print *, "-> Precision (wp) initialized."
+! print *, "-> Environment:"
+! print '(A, F0.2, A)', "   * Water Density : ", RHO_WATER, " kg/m^3"
+! print '(A, F0.2, A)', "   * Sound Speed   : ", SPEED_OF_SOUND, " m/s"
+! print *, "---------------------------------------------------"
 
 ! ---------------------------------------------------------
 ! 2. Geometry and Kinematics Loading
 ! ---------------------------------------------------------
-print *, "-> Parsing SubDyn summary..."
-ALLOCATE(Nodes(Nm,Nn,3), source=0.0_WP)
-CALL GET_SDSUM_VARIABLES(SD_path, Nmembers=Nm, Nnodes=Nn, verbose=.true., Nodes=Nodes)
-
-print *, "-> Reading SubDyn kinematics from OpenFAST binary..."
-CALL READ_INPUT_SD(filename=OP_path, Nmembers=Nm, Nnodes=Nn, &
-                   verbose=.true., Time_out=time_array, Array_out=sd_tensor,      &
-                   unit_out=unit_label, status=status)
-
-
 
 
 ! ---------------------------------------------------------
@@ -63,8 +65,11 @@ CALL READ_INPUT_SD(filename=OP_path, Nmembers=Nm, Nnodes=Nn, &
 ! print *, "-> Exporting HDF5 results..."
 ! TODO: call h5_exporter%write_results()
 
+CALL format_elapsed(start_time, elapsed_display, tag)
+
+print*,' '
 print *, "==================================================="
-print *, " Simulation completed successfully.                "
+print '(A, F8.3, A)', '    Total elapsed time = ', elapsed_display, ' (' // trim(tag) // ')'
 print *, "==================================================="
 
 END PROGRAM MAIN
