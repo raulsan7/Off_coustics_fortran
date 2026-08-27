@@ -2,7 +2,7 @@ MODULE WindTurbine
 
     
 USE, INTRINSIC :: iso_fortran_env
-USE Kinds
+USE Kinds, ONLY: I32, WP, PI
 
 IMPLICIT NONE
 PRIVATE
@@ -26,12 +26,12 @@ TYPE, ABSTRACT :: WindTurbine_t
     ! --- Derived attirbutes --- !
     CHARACTER(len=:), ALLOCATABLE :: case_type                      ! [-] Tag that identifies case type
     LOGICAL                       :: in_farm = .false.              ! [-] Wheter current turbine is within a farm
-    REAL(WP), ALLOCATABLE         :: Freqs(:)                       ! [Hz] Frequency array (Nfreqs)
-    REAL(WP), ALLOCATABLE         :: F(:,:,:)                       ! [N] Force array (Nfreqs, Nnodes_wet, 3)
-    REAL(WP), ALLOCATABLE         :: x_all(:,:,:)                   ! [m] All nodes array (Nmembers, Nnodes, 3)
-    REAL(WP), ALLOCATABLE         :: x(:,:)                         ! [m] Wetted nodes list (Nnodes_wet, 3)
-    REAL(WP), ALLOCATABLE         :: time(:)                        ! [s] Time array
-    REAL(WP), ALLOCATABLE         :: acc(:,:,:,:)                   ! [m/s^2] Acceleration array (NFreqs, Nmembers, Nnodes, 3)
+    COMPLEX(WP), ALLOCATABLE      :: F(:,:,:)                       ! [N] Force array (Nfreqs, Nnodes_wet, 3)
+    REAL(WP)   , ALLOCATABLE      :: Freqs(:)                       ! [Hz] Frequency array (Nfreqs)
+    REAL(WP)   , ALLOCATABLE      :: x_all(:,:,:)                   ! [m] All nodes array (Nmembers, Nnodes, 3)
+    REAL(WP)   , ALLOCATABLE      :: x(:,:)                         ! [m] Wetted nodes list (Nnodes_wet, 3)
+    REAL(WP)   , ALLOCATABLE      :: time(:)                        ! [s] Time array
+    REAL(WP)   , ALLOCATABLE      :: acc(:,:,:,:)                   ! [m/s^2] Acceleration array (NFreqs, Nmembers, Nnodes, 3)
     LOGICAL                       :: BariPos_set = .false.          ! [-] Wheter baricenter is inputed
 
     ! --- Acoustic Solver placeholder --- !
@@ -63,55 +63,56 @@ TYPE, ABSTRACT :: WindTurbine_t
     ! PROCEDURE :: run_sphere
     ! PROCEDURE :: run_all
 
-    ! --- Deferred(abstract) procedures --- !
-    ! PROCEDURE(compute_force)                , DEFERRED :: compute_force
-    ! PROCEDURE(compute_mass)                 , DEFERRED :: compute_mass
-    ! PROCEDURE(filter_frequencies)           , DEFERRED :: filter_frequencies
-    ! PROCEDURE(get_impedance_corrected_force), DEFERRED :: get_impedance_corrected_force
+    ! --- Deferred(abstract) procedures --- ! Note: compute_force_i is only for the sign, compute_force is the name used in the subclases
+    PROCEDURE(compute_force_i)                , DEFERRED :: compute_force
+    PROCEDURE(compute_mass_i)                 , DEFERRED :: compute_mass
+    PROCEDURE(filter_frequencies_i)           , DEFERRED :: filter_frequencies
+    ! PROCEDURE(get_impedance_corrected_force_i), DEFERRED :: get_impedance_corrected_force
 
 END TYPE WindTurbine_t
+
 
 ! --------------------------------------------------
 ! Abstract interfaces for deferred(abstract) methods
 ! --------------------------------------------------
 ! Compute force
 ABSTRACT INTERFACE
-    SUBROUTINE compute_force(self, filter_freqs, verbose, skipf)
-        IMPORT :: WindTurbine_t
+    SUBROUTINE compute_force_i(self, filter_freqs, verbose, skipf)
+        IMPORT :: WindTurbine_t, I32
         CLASS(WindTurbine_t), INTENT(INOUT) :: self
-        LOGICAL             , INTENT(IN)    :: filter_freqs
-        LOGICAL             , INTENT(IN)    :: verbose
-        LOGICAL             , INTENT(IN)    :: skipf
-    END SUBROUTINE compute_force
+        LOGICAL             , INTENT(IN), OPTIONAL :: filter_freqs
+        LOGICAL             , INTENT(IN), OPTIONAL :: verbose
+        INTEGER(I32)        , INTENT(IN), OPTIONAL :: skipf
+    END SUBROUTINE compute_force_i
 END INTERFACE
 
 ! Compute mass
 ABSTRACT INTERFACE
-    SUBROUTINE compute_mass(self, mass, added_mass)
+    SUBROUTINE compute_mass_i(self, mass, added_mass)
         IMPORT :: WindTurbine_t, WP
         CLASS(WindTurbine_t) , INTENT(INOUT):: self
         REAL(WP), ALLOCATABLE, INTENT(OUT) :: mass(:)
         REAL(WP), ALLOCATABLE, INTENT(OUT) :: added_mass(:)
-    END SUBROUTINE compute_mass
+    END SUBROUTINE compute_mass_i
 END INTERFACE
 
 ! Filter frequencies
 ABSTRACT INTERFACE
-    FUNCTION filter_frequencies(self) RESULT(mask)
+    FUNCTION filter_frequencies_i(self) RESULT(mask)
         IMPORT :: WindTurbine_t, WP
         CLASS(WindTurbine_t), INTENT(INOUT) :: self
-        LOGICAL, ALLOCATABLE                :: mask
-    END FUNCTION filter_frequencies
+        LOGICAL, ALLOCATABLE                :: mask(:)
+    END FUNCTION filter_frequencies_i
 END INTERFACE
 
 ! Impedance correction
 ABSTRACT INTERFACE
-    FUNCTION get_impedance_corrected_force(self, c_wat) RESULT(corrected_force)
+    FUNCTION get_impedance_corrected_force_i(self, c_wat) RESULT(corrected_force)
         IMPORT :: WindTurbine_t, WP
         CLASS(WindTurbine_t), INTENT(INOUT) :: self
         REAL(WP), INTENT(IN) :: c_wat
         COMPLEX(WP), ALLOCATABLE :: corrected_force(:,:,:)
-    END FUNCTION get_impedance_corrected_force
+    END FUNCTION get_impedance_corrected_force_i
 END INTERFACE
 
 
@@ -291,6 +292,7 @@ SUBROUTINE read_input(self, in_farm, verbose, skip, From, Upto)
     
 END SUBROUTINE read_input
 
+
 SUBROUTINE translate_align_with_WindDir(self)
     CLASS(WindTurbine_t), INTENT(INOUT) :: self
 
@@ -345,9 +347,6 @@ SUBROUTINE translate_align_with_WindDir(self)
     self%BariPos(1:2) = temp2(1,:) + axis_xy
 
 END SUBROUTINE translate_align_with_WindDir
-
-
-
 
 
 END MODULE WindTurbine

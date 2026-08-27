@@ -2,6 +2,7 @@ PROGRAM MAIN
 
 USE Kinds
 USE IOUtils
+USE MathUtils
 USE WindTurbine
 USE TurbineTypes
 
@@ -14,8 +15,7 @@ INTEGER(I32)    , PARAMETER :: Nm = 8, Nn=5
 
 TYPE(DTU10MWMonopile) :: monopile
 
-REAL(WP) :: start_time, end_time, elapsed_time
-REAL(WP) :: elapsed_display
+REAL(WP) :: start_time, elapsed_display
 CHARACTER(len=8) :: tag
 
 
@@ -28,13 +28,14 @@ CALL monopile % init( &
         output_dir= "../OP_output/", &
         save_dir  = "./turbine_acoustic_data/", &
         WindSpeed = 11.4_dp, &
-        WindDir   = 45.0_dp, &
+        WindDir   = 0.0_dp, &
         Depth     = 30.0_dp, &
         Nmembers  = 8, &
         Nnodes    = 5, &
         debug    = .true. )
 
 CALL monopile % read_input(verbose=.true.)
+CALL monopile % compute_force(filter_freqs=.true., verbose=.true.)
 
 ! print *, "==================================================="
 ! print *, " OFF-Coustics: Offshore Acoustic Simulator         "

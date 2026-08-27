@@ -1,10 +1,10 @@
 MODULE IOUtils
 
-USE KINDS
+USE KINDS, ONLY:I32, WP
 IMPLICIT NONE
 PRIVATE
 
-PUBLIC :: get_SDsum_variables, read_input_SD, read_curve, format_elapsed
+PUBLIC :: get_SDsum_variables, read_input_SD, read_curve
 
 CONTAINS
 
@@ -732,43 +732,60 @@ FUNCTION read_curve(filename, ws, col_idx) RESULT(val)
         return
     end if
 
-    ! Skip header
+    ! Skip CSV header: first line is the variable name, second line is the column names
+    read(fu, '(A)', iostat=status) line_buffer
+    if (status /= 0) then; close(fu); return; end if
     read(fu, '(A)', iostat=status) line_buffer
     if (status /= 0) then; close(fu); return; end if
 
-    ! Count rows
+    ! Count only numeric data rows
+    allocate(row_buff(1))
     n_rows = 0
     do
         read(fu, '(A)', iostat=ios) line_buffer
         if (ios /= 0) exit
-        if (len_trim(line_buffer) > 0) n_rows = n_rows + 1
+        if (len_trim(line_buffer) == 0) cycle
+        ! Ignore header lines if they accidentally remain in the data block
+        if (index(adjustl(line_buffer), 'X') == 1 .or. index(adjustl(line_buffer), 'Y') == 1) cycle
+
+        ! Try to parse the first value as a real; if it fails, skip the line
+        read(line_buffer, *, iostat=ios) row_buff(1)
+        if (ios == 0) n_rows = n_rows + 1
     end do
 
     if (n_rows < 2) then
-        print *, "Error: CSV requires at least 2 points for interpolation."
-        close(fu); return
+        print *, "Error: CSV requires at least 2 numeric points for interpolation."
+        close(fu); deallocate(row_buff); return
     end if
 
     allocate(ws_array(n_rows))
     allocate(var_array(n_rows))
+    deallocate(row_buff)
     allocate(row_buff(target_col))
 
     ! Read and parse data
     rewind(fu)
-    read(fu, '(A)') line_buffer ! Skip header
+    read(fu, '(A)') line_buffer ! Skip first line
+    read(fu, '(A)') line_buffer ! Skip second line
 
-    do i = 1, n_rows
+    i = 0
+    do
         read(fu, '(A)', iostat=ios) line_buffer
         if (ios /= 0) exit
-        
+        if (len_trim(line_buffer) == 0) cycle
+
         ! Replace commas for blank spaces
         do j = 1, len_trim(line_buffer)
             if (line_buffer(j:j) == ',') line_buffer(j:j) = ' '
         end do
-        
-        read(line_buffer, *) row_buff(1:target_col)
+
+        read(line_buffer, *, iostat=ios) row_buff(1:target_col)
+        if (ios /= 0) cycle
+
+        i = i + 1
         ws_array(i)  = row_buff(1)
         var_array(i) = row_buff(target_col)
+        if (i >= n_rows) exit
     end do
 
     close(fu)
@@ -917,33 +934,6 @@ FUNCTION extract_number_nodes(text_line) RESULT(number_of_nodes)
     end if
 
 END FUNCTION extract_number_nodes
-
-SUBROUTINE format_elapsed(start_time, elapsed_display, tag)
-    ! Returns elapsed time since start_time and a human-friendly unit tag
-    REAL(WP), INTENT(IN)  :: start_time
-    REAL(WP), INTENT(OUT) :: elapsed_display
-    CHARACTER(len=*), INTENT(OUT) :: tag
-
-    REAL(WP) :: end_time, elapsed_time
-
-    CALL cpu_time(end_time)
-    elapsed_time = end_time - start_time
-
-    elapsed_display = elapsed_time
-    if (elapsed_display > 60.0_WP .and. elapsed_display <= 3600.0_WP) then
-        elapsed_display = elapsed_display / 60.0_WP
-        tag = "min"
-    elseif (elapsed_display > 3600.0_WP .and. elapsed_display <= 86400.0_WP) then
-        elapsed_display = elapsed_display / 3600.0_WP
-        tag = "h"
-    elseif (elapsed_display > 86400.0_WP) then
-        elapsed_display = elapsed_display / 86400.0_WP
-        tag = "days"
-    else
-        tag = "s"
-    end if
-
-END SUBROUTINE format_elapsed
 
 
 END MODULE IOUtils
