@@ -1,3 +1,5 @@
+! RUN COMMAND: fpm run --flag "-O3 -fopenmp"
+
 PROGRAM MAIN
 
 USE Kinds
@@ -34,8 +36,8 @@ CALL monopile % init( &
         Nnodes    = 5, &
         debug    = .true. )
 
-CALL monopile % read_input(verbose=.true.)
-CALL monopile % compute_force(filter_freqs=.true., verbose=.true.)
+CALL monopile % read_input(verbose=.false.)
+CALL monopile % compute_force(filter_freqs=.true., verbose=.false.)
 
 ! print *, "==================================================="
 ! print *, " OFF-Coustics: Offshore Acoustic Simulator         "

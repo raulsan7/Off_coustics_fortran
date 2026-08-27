@@ -187,7 +187,7 @@ SUBROUTINE read_input_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, ver
     CHARACTER(len=16) :: strx, stry, strz
     CHARACTER(len=32), ALLOCATABLE :: out_channels(:), raw_units(:)
     REAL(WP), ALLOCATABLE :: raw_time(:), raw_array(:,:)
-    INTEGER(I32) :: m, n, ch_idx, nt, nt_skip, t_skip, t_orig, n_chans
+    INTEGER(I32) :: m, n, ch_idx, nt, nt_skip, t_skip, t_orig, n_chans, base, idx
     CHARACTER(len=32) :: ch_name
 
     status = 0
@@ -275,12 +275,14 @@ SUBROUTINE read_input_SD(filename, what, skip, Nmembers, Nnodes, From, Upto, ver
     t_skip = 1
     do t_orig = 1, nt, skip_
         Time_out(t_skip) = raw_time(t_orig)
-        ch_idx = 1
         do m = 1, Nmembers_
+            base = (m - 1) * Nnodes_ * 3 + 1
+            !$OMP SIMD
             do n = 1, Nnodes_
-                Array_out(t_skip, m, n, 1) = raw_array(t_orig, ch_idx); ch_idx = ch_idx + 1
-                Array_out(t_skip, m, n, 2) = raw_array(t_orig, ch_idx); ch_idx = ch_idx + 1
-                Array_out(t_skip, m, n, 3) = raw_array(t_orig, ch_idx); ch_idx = ch_idx + 1
+                idx = base + (n - 1) * 3
+                Array_out(t_skip, m, n, 1) = raw_array(t_orig, idx)
+                Array_out(t_skip, m, n, 2) = raw_array(t_orig, idx + 1)
+                Array_out(t_skip, m, n, 3) = raw_array(t_orig, idx + 2)
             end do
         end do
         t_skip = t_skip + 1
@@ -478,42 +480,47 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
 
     ! --- 8. Read Data as Massive Contiguous Arrays ---
     if (time_bytes == 4) then
-        N_cols_raw = NumOutChans + 2 
+        N_cols_raw = NumOutChans + 2
     else
         N_cols_raw = NumOutChans
     end if
 
     chunk_rows = chunk_size
     allocate(raw_data(N_cols_raw, chunk_rows))
-    
+
     row_counter = 0
     written = 0
 
     do while (row_counter < NT)
         rows_to_read = min(chunk_rows, NT - row_counter)
-        
         read(fu, iostat=status) raw_data(:, 1:rows_to_read)
         if (status /= 0) exit
-        
+
         do i = 1, rows_to_read
             current_row = row_counter + i
-            
             if (current_row >= start_idx .and. current_row <= end_idx) then
                 written = written + 1
-                
-                ! Decodificar Tiempo
+
+                ! Decode time
                 if (time_bytes == 4) then
                     p_time = transfer(raw_data(1:2, i), p_time)
                     time_out(written) = real((real(p_time, 8) - TimeOff) / TimeScl, WP)
                 else
                     time_out(written) = real(TimeOut1 + TimeIncr * real(current_row - 1, 8), WP)
                 end if
-                
-                ! Decodificar Canales
+
+                ! Assign time column if any (assume at most one)
                 do j = 1, req_chans
                     if (ReqIdx(j) == -1) then
                         array_out(written, j) = time_out(written)
-                    else
+                        exit
+                    end if
+                end do
+
+                ! Decode data channels with SIMD
+                !$OMP SIMD
+                do j = 1, req_chans
+                    if (ReqIdx(j) /= -1) then
                         k = ReqIdx(j)
                         if (time_bytes == 4) then
                             val_i16 = raw_data(k + 2, i)
@@ -525,12 +532,10 @@ SUBROUTINE parse_channels_binary(full_path, plotChannels, From_val, Upto_val, &
                 end do
             end if
         end do
-        
+
         row_counter = row_counter + rows_to_read
         if (written == n_target_rows) exit
     end do
-
-    close(fu)
 
     if (verbose) then
         print *, "Output array shape: [", written, ", ", req_chans, "]"

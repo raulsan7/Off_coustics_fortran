@@ -3,6 +3,7 @@ MODULE WindTurbine
     
 USE, INTRINSIC :: iso_fortran_env
 USE Kinds, ONLY: I32, WP, PI
+USE omp_lib
 
 IMPLICIT NONE
 PRIVATE
@@ -296,57 +297,53 @@ END SUBROUTINE read_input
 SUBROUTINE translate_align_with_WindDir(self)
     CLASS(WindTurbine_t), INTENT(INOUT) :: self
 
-    ! Local variables
     REAL(WP) :: yaw, c, s
-    REAL(WP) :: R2(2,2), R3(3,3), axis_xy(2)
-    INTEGER(I32) :: i,j,m,n
-    REAL(WP) :: temp(1,3), temp2(1,2)
+    REAL(WP) :: axis_xy(2)
+    INTEGER(I32) :: i, j, m, n
+    INTEGER(I32) :: nt, nm, nn
+    REAL(WP) :: x_old, y_old
 
-    ! Rotation angle in radians
-    yaw = self % WindDir * PI/180.0_WP
+    yaw = self % WindDir * PI / 180.0_WP
     c   = cos(yaw)
     s   = sin(yaw)
 
-    ! 2D rotation matrix (XY Plane)
-    R2(1,1) = c; R2(1,2) = -s
-    R2(2,1) = s; R2(2,2) = c
-
-    ! 3D rotation matrix
-    R3 = 0.0_WP; R3(3,3) = 1.0_WP
-    R3(1,1) =  c; R3(1,2) = -s
-    R3(2,1) =  s; R3(2,2) =  c
+    if (abs(self % WindDir) < 1.0e-12_WP) return
 
     axis_xy = self % AxisPos
 
-    ! Rotate accelerations around origin (3D rotation)
-    if (ALLOCATED(self%acc)) then
-        do i = 1, size(self%acc, 1)      ! Nt
-            do m = 1, size(self%acc, 2)  ! Nmembers
-                do n = 1, size(self%acc, 3)  ! Nnodes
-                    temp = matmul(reshape(self%acc(i,m,n,:), [1,3]), transpose(R3))
-                    self%acc(i,m,n,:) = temp(1,:)
-                end do
-            end do
-        end do
+    if (ALLOCATED(self % acc)) then
+       nt = size(self % acc, 1)
+       nm = size(self % acc, 2)
+       nn = size(self % acc, 3)
+       !$omp parallel do collapse(3)
+       do n = 1, nn
+          do m = 1, nm
+             do i = 1, nt
+                x_old = self % acc(i,m,n,1)
+                y_old = self % acc(i,m,n,2)
+                self % acc(i,m,n,1) = c * x_old - s * y_old
+                self % acc(i,m,n,2) = s * x_old + c * y_old
+             end do
+          end do
+       end do
+       !$omp end parallel do
     end if
 
-    ! Rotate and translate node coordinates in x_all
-    if (ALLOCATED(self%x_all)) then
-        do i = 1, size(self%x_all, 1)
-            do j = 1, size(self%x_all, 2)
-                temp = matmul(reshape(self%x_all(i,j,1:3), [1,3]), transpose(R3))
-                ! apply translation only to x,y components
-                temp(1,1:2) = temp(1,1:2) + axis_xy
-                self%x_all(i,j,1:3) = temp(1,:)
-            end do
-        end do
+    if (ALLOCATED(self % x_all)) then
+       nm = size(self % x_all, 1)
+       nn = size(self % x_all, 2)
+       !$omp parallel do collapse(2)
+       do i = 1, nm
+          do j = 1, nn
+             x_old = self % x_all(i,j,1)
+             y_old = self % x_all(i,j,2)
+             self % x_all(i,j,1) = c * x_old - s * y_old + axis_xy(1)
+             self % x_all(i,j,2) = s * x_old + c * y_old + axis_xy(2)
+          end do
+       end do
+       !$omp end parallel do
     end if
-
-    ! Rotate and translate baricenter (2D rotation + translation)
-    temp2 = matmul(reshape(self%BariPos, [1,2]), transpose(R2))
-    self%BariPos(1:2) = temp2(1,:) + axis_xy
-
-END SUBROUTINE translate_align_with_WindDir
+END SUBROUTINE
 
 
 END MODULE WindTurbine

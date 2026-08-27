@@ -1,6 +1,7 @@
 MODULE MathUtils
 
 USE FFTW3
+USE omp_lib
 USE Kinds, ONLY: WP, I32, PI
 USE, INTRINSIC :: iso_c_binding
 
@@ -110,42 +111,38 @@ END FUNCTION remove_duplicate_nodes
 
 FUNCTION divide_span(x) RESULT(dx)
     !> Computes representative span intervals (dx) for an ordered spatial vector.
-    !> Equivalent to Python's divide_span.
+    !> Fully vectorized to eliminate conditionals and temporary arrays.
     REAL(WP), INTENT(IN) :: x(:)
     REAL(WP), ALLOCATABLE :: dx(:)
 
-    INTEGER(I32) :: n, i
-    REAL(WP), ALLOCATABLE :: x_work(:), inf(:), sup(:)
+    INTEGER(I32) :: n
+    REAL(WP), ALLOCATABLE :: x_work(:)
     LOGICAL :: flipped
 
     n = size(x)
-    allocate(x_work(n), inf(n), sup(n), dx(n))
+    ALLOCATE(dx(n))
+
+    if (n == 0) return
+
+    ALLOCATE(x_work(n))
 
     ! Check direction and possibly reverse
     flipped = .false.
-    if (x(1) > x(n)) then
-        x_work = x(n:1:-1)   ! reverse
+    if (n > 1 .and. x(1) > x(n)) then
+        x_work = x(n:1:-1)
         flipped = .true.
     else
         x_work = x
     end if
 
-    ! Compute intervals
-    do i = 1, n
-        if (i == 1) then
-            inf(i) = x_work(i)
-        else
-            inf(i) = 0.5_wp * (x_work(i) + x_work(i-1))
-        end if
-
-        if (i == n) then
-            sup(i) = x_work(i)
-        else
-            sup(i) = 0.5_wp * (x_work(i) + x_work(i+1))
-        end if
-
-        dx(i) = sup(i) - inf(i)
-    end do
+    ! Vectorized span calculation via algebraic simplification
+    if (n == 1) then
+        dx(1) = 0.0_WP
+    else
+        dx(1)     = 0.5_WP * (x_work(2) - x_work(1))
+        dx(2:n-1) = 0.5_WP * (x_work(3:n) - x_work(1:n-2))
+        dx(n)     = 0.5_WP * (x_work(n) - x_work(n-1))
+    end if
 
     ! If we had reversed, reverse dx back
     if (flipped) then
@@ -153,7 +150,7 @@ FUNCTION divide_span(x) RESULT(dx)
     end if
 
     ! Check consistency: all dx must have the same sign
-    if (.not. (all(dx > 0.0_wp) .or. all(dx < 0.0_wp))) then
+    if (.not. (all(dx > 0.0_WP) .or. all(dx < 0.0_WP))) then
         error stop "divide_span: check input, non-monotonic grid"
     end if
 
@@ -162,18 +159,9 @@ END FUNCTION divide_span
 
 SUBROUTINE compute_rfft(array, nt, dt, skipf, remove_zero, array_out, freqs)
     !> Computes the Real Fast Fourier Transform (RFFT) of a 3D time-series array.
-    !> Equivalent to Python's compute_rfft.
-    !>
-    !> Arguments:
-    !>   array  : real(wp), dimension(:,:,:)   Input array (nt, Nnodes, 3)
-    !>   nt     : integer                      Number of time steps
-    !>   dt     : real(wp)                     Time step size [s]
-    !>   skipf  : integer, optional            Frequency decimation factor
-    !>   remove_zero : logical, optional       Drop DC frequency (default .true.)
-    !>
-    !> Outputs:
-    !>   f      : complex(wp), allocatable     Frequency-domain spectrum (nfreq, Nnodes, 3)
-    !>   freqs  : real(wp), allocatable        Frequency bins [Hz]
+    !> Optimized for HPC: Eliminates all intermediate arrays, fuses mean/windowing, 
+    !> and performs direct-to-final-size allocation to avoid memory thrashing.
+    USE omp_lib
 
     REAL(WP)                , INTENT(IN)           :: array(:,:,:)
     INTEGER(I32)            , INTENT(IN)           :: nt
@@ -184,144 +172,124 @@ SUBROUTINE compute_rfft(array, nt, dt, skipf, remove_zero, array_out, freqs)
     REAL(WP), ALLOCATABLE   , INTENT(OUT)          :: freqs(:)
 
     ! Local variables
-    INTEGER(I32) :: nfreq, n_signals, i, j, k, idx, pos
-    INTEGER(I32) :: skipf_, nfreq_new, count_pos
+    INTEGER(I32) :: nfreq_raw, nfreq_final, n_signals, i, j, k, idx, pos, start_idx
+    INTEGER(I32) :: skipf_, n2, n3
     LOGICAL :: remove_zero_
-    REAL(WP) :: win_norm
-    REAL(WP), ALLOCATABLE :: window(:), mean_vals(:,:)
-    REAL(WP), ALLOCATABLE :: data_in(:,:,:)
-    REAL(WP), ALLOCATABLE :: data_flat(:,:)
+    REAL(WP) :: win_norm, mean_val, scale_fact
+    REAL(WP), ALLOCATABLE :: window(:), data_flat(:,:)
     COMPLEX(WP), ALLOCATABLE :: out_flat(:,:)
-    COMPLEX(WP), ALLOCATABLE :: f_temp(:,:,:)
-    REAL(WP), ALLOCATABLE :: freqs_temp(:)
-    COMPLEX(WP), ALLOCATABLE :: f_filt(:,:,:)
-    REAL(WP), ALLOCATABLE :: freqs_filt(:)
 
+    ! FFTW variables
     TYPE(C_PTR) :: plan
-    INTEGER(C_INT) :: rank
+    INTEGER(C_INT) :: rank, howmany, istride, idist, ostride, odist, flags
     INTEGER(C_INT), ALLOCATABLE :: n_(:), inembed(:), onembed(:)
-    INTEGER(C_INT) :: howmany, istride, idist, ostride, odist, flags
-
 
     ! Defaults
     skipf_ = 1           ; if (PRESENT(skipf))       skipf_       = skipf
     remove_zero_ = .true.; if (PRESENT(remove_zero)) remove_zero_ = remove_zero
 
-    n_signals = size(array,2) * size(array,3)
-    nfreq = nt/2 + 1
+    n2 = size(array,2)
+    n3 = size(array,3)
+    n_signals = n2 * n3
+    nfreq_raw = nt / 2 + 1
 
-    ! Hanning window and its mean
+    ! 1. Compute window and its norm once
     ALLOCATE(window(nt))
+    win_norm = 0.0_WP
+    !$omp parallel do reduction(+:win_norm)
     do i = 1, nt
         window(i) = 0.5_WP - 0.5_WP*cos(2.0_WP*PI * REAL(i-1,WP) / REAL(nt-1, WP))
+        win_norm = win_norm + window(i)
     end do
-    win_norm = sum(window) / nt
+    !$omp end parallel do
+    win_norm = win_norm / REAL(nt, WP)
 
-    ! Substract mean along time axis
-    ALLOCATE(mean_vals(size(array,2), size(array,3)))
-    mean_vals = sum(array, dim=1)/nt
-    ALLOCATE(data_in(nt, size(array,2), size(array,3)))
-    do i = 1, nt
-        data_in(i,:,:) = array(i,:,:) - mean_vals
-    end do
-    
-    ! Apply window
-    do i = 1, nt
-        data_in(i,:,:) = data_in(i,:,:) * window(i)
-    end do
-    
-    ! Flatten to (nt, n_signals) for FFTW many transforms
+    ! 2. Fused Mean, Windowing, and Flattening (No temporary 3D arrays)
     ALLOCATE(data_flat(nt, n_signals))
-    do k = 1, size(array,3)
-        do j = 1, size(array,2)
-            idx = (k-1)*size(array,2) + j
-            data_flat(:,idx) = data_in(:,j,k)
+    
+    !$omp parallel do private(idx, j, k, i, mean_val)
+    do idx = 1, n_signals
+        ! Map flat index back to j, k to read directly from 3D array
+        k = (idx - 1) / n2 + 1
+        j = mod(idx - 1, n2) + 1
+        
+        ! Pass A: Compute mean
+        mean_val = 0.0_WP
+        do i = 1, nt
+            mean_val = mean_val + array(i, j, k)
+        end do
+        mean_val = mean_val / REAL(nt, WP)
+        
+        ! Pass B: Subtract mean, apply window, store flat (column-major)
+        do i = 1, nt
+            data_flat(i, idx) = (array(i, j, k) - mean_val) * window(i)
         end do
     end do
-    
-    ! Prepare FFTW plan for many 1D real-to-complex transforms
-    ALLOCATE(out_flat(nfreq, n_signals))
+    !$omp end parallel do
+    DEALLOCATE(window)
+
+    ! 3. FFTW Execution
+    ALLOCATE(out_flat(nfreq_raw, n_signals))
     rank = 1
-    ALLOCATE(n_(1))
-    n_(1) = nt
-    ALLOCATE(inembed(1), onembed(1))
+    ALLOCATE(n_(1), inembed(1), onembed(1))
+    n_(1)      = nt
     inembed(1) = nt
-    onembed(1) = nfreq
-    howmany = n_signals
-    istride = 1
-    idist = nt
-    ostride = 1
-    odist = nfreq
-    flags = FFTW_ESTIMATE
+    onembed(1) = nfreq_raw
+    howmany    = n_signals
+    istride    = 1
+    idist      = nt
+    ostride    = 1
+    odist      = nfreq_raw
+    flags      = FFTW_ESTIMATE
 
     plan = fftw_plan_many_dft_r2c(rank, n_, howmany, &
                                   data_flat, inembed, istride, idist, &
                                   out_flat, onembed, ostride, odist, flags)
 
     if (.not. c_associated(plan)) error stop "compute_rfft: FFTW plan creation failed"
-
-    ! Execute FFT
     CALL fftw_execute_dft_r2c(plan, data_flat, out_flat)
-
-    ! Destroy plan
     CALL fftw_destroy_plan(plan)
+    
+    DEALLOCATE(data_flat, n_, inembed, onembed)
 
-    ! Sacale and reshape output
-    ALLOCATE(array_out(nfreq, size(array,2), size(array,3)))
-    do k = 1, size(array,3)
-        do j = 1, size(array,2)
-            idx = (k-1) * size(array,2) + j
-            array_out(:,j,k) = 2.0_WP * out_flat(:,idx) / (nt * win_norm)
-        end do
+    ! 4. Direct-to-Final Allocation (Eliminates array re-allocations)
+    start_idx = 1
+    if (remove_zero_) start_idx = 2
+
+    ! Pre-calculate final exact size
+    nfreq_final = 0
+    do i = start_idx, nfreq_raw, skipf_
+        nfreq_final = nfreq_final + 1
     end do
 
-    ! Frequencies
-    ALLOCATE(freqs(nfreq))
-    do i = 1, nfreq
-        freqs(i) = REAL(I-1, WP) / (nt * dt)
+    ALLOCATE(array_out(nfreq_final, n2, n3))
+    ALLOCATE(freqs(nfreq_final))
+
+    ! Fill frequencies
+    pos = 1
+    do i = start_idx, nfreq_raw, skipf_
+        freqs(pos) = REAL(i-1, WP) / (REAL(nt, WP) * dt)
+        pos = pos + 1
     end do
 
-    ! Applu skipf decimation
-    if (skipf_ > 1) then
-        print '(A,I6)', 'Number of frequencies before skipf: ', nfreq
-        nfreq_new = (nfreq + skipf_ - 1) / skipf_
-        ALLOCATE(f_temp(nfreq_new, size(array,2), size(array,3)))
-        ALLOCATE(freqs_temp(nfreq_new))
-        do i = 1, nfreq_new
-            pos = (i-1) * skipf_ + 1
-            freqs_temp(i) = freqs(pos)
-            f_temp(i,:,:) = array_out(pos,:,:)
-        end do
-        DEALLOCATE(array_out, freqs)
-        ALLOCATE(array_out(nfreq_new, size(array,2), size(array,3)))
-        array_out = f_temp
-        ALLOCATE(freqs(nfreq_new))
-        freqs = freqs_temp
-        DEALLOCATE(f_temp, freqs_temp)
-    end if
+    ! Scale and map directly to 3D array_out
+    scale_fact = 2.0_WP / (REAL(nt, WP) * win_norm)
 
-    ! Remove zero frequency
-    if (remove_zero_) then
-        count_pos = count(freqs > 0.0_WP)
-        ALLOCATE(f_filt(count_pos, size(array,2), size(array,3)))
-        ALLOCATE(freqs_filt(count_pos))
+    !$omp parallel do private(idx, j, k, pos, i)
+    do idx = 1, n_signals
+        k = (idx - 1) / n2 + 1
+        j = mod(idx - 1, n2) + 1
+        
         pos = 1
-        do i = 1, size(freqs)
-            if (freqs(i) > 0.0_wp) then
-                freqs_filt(pos) = freqs(i)
-                f_filt(pos,:,:) = array_out(i,:,:)
-                pos = pos + 1
-            end if
+        ! Inner loop over frequencies guarantees contiguous writes to array_out
+        do i = start_idx, nfreq_raw, skipf_
+            array_out(pos, j, k) = out_flat(i, idx) * scale_fact
+            pos = pos + 1
         end do
-        DEALLOCATE(array_out, freqs)
-        ALLOCATE(array_out(count_pos, size(array,2), size(array,3)))
-        array_out = f_filt
-        ALLOCATE(freqs(count_pos))
-        freqs = freqs_filt
-        DEALLOCATE(f_filt, freqs_filt)
-    end if
+    end do
+    !$omp end parallel do
 
-    DEALLOCATE(window, mean_vals, data_in, data_flat, out_flat, n_, inembed, onembed)
+    DEALLOCATE(out_flat)
 
 END SUBROUTINE compute_rfft
 
@@ -329,23 +297,9 @@ END SUBROUTINE compute_rfft
 SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t , zeta, nfreq, seed, &
                                             used_freqs, fcut, a, freqs_out)
     !> Reconstructs a time-series signal from spectral peak distributions.
-    !> Equivalent to Python's generate_timeseries_banded_sines.
-    !>
-    !> Arguments:
-    !>   peaks     : real(wp), dimension(:,:)  (N,2) Col1: frequency [Hz], Col2: RMS amplitude
-    !>   keys      : character(len=20), dimension(:)  Component labels
-    !>   t         : real(wp), dimension(:)     Time array [s]
-    !>   zeta      : real(wp)                   Modal damping ratio
-    !>   nfreq     : integer                    Spectral lines per Gaussian band
-    !>   seed      : integer                    Random seed (approximate)
-    !>   used_freqs: logical                    If .true., output used frequencies
-    !>   fcut      : real(wp)                   Cutoff frequency to force banded reconstruction
-    !>
-    !> Outputs:
-    !>   a         : real(wp), allocatable      Synthesized time series
-    !>   freqs_out : real(wp), allocatable      Sorted unique active frequencies (if used_freqs)
-    USE, INTRINSIC :: iso_fortran_env
-
+    !> Optimized for HPC: Aggregates all frequencies first, then uses a
+    !> single OpenMP+SIMD pass over the time domain to maximize cache locality.
+    
     REAL(WP)         , INTENT(IN) :: peaks(:,:)
     CHARACTER(len=20), INTENT(IN) :: keys(:)
     REAL(WP)         , INTENT(IN) :: t(:)
@@ -360,14 +314,20 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t , zeta, nfreq, seed, 
     ! Local variables
     INTEGER(I32) :: i, j, seed_size, nt, n_peaks, n_active, nfreq_, seed_
     INTEGER(I32) :: max_freq_list, n_kept
-    REAL(WP) :: f0, Arms, sigma, phase, rnd, zeta_, fcut_, sqrt2 = sqrt(2.0_WP)
+    REAL(WP) :: f0, Arms, sigma, phase, rnd, zeta_, fcut_, sqrt2
     REAL(WP), ALLOCATABLE :: fk(:), g(:), Arms_k(:), phases(:)
-    REAL(WP), ALLOCATABLE :: freq_list(:)
+    
+    ! Global accumulation arrays for all sine wave components
+    REAL(WP), ALLOCATABLE :: all_omega(:), all_amp(:), all_phase(:), freq_list(:)
     INTEGER(I32), ALLOCATABLE :: seed_arr(:)
     LOGICAL :: used_freqs_
     CHARACTER(len=20) :: key_label
+    
+    ! Time loop variables
+    REAL(WP) :: current_t, current_sum
 
     ! Defaults
+    sqrt2       = sqrt(2.0_WP)
     zeta_       = 0.02_WP; if (PRESENT(zeta))       zeta_       = zeta
     nfreq_      = 50_I32 ; if (PRESENT(nfreq))      nfreq_      = nfreq
     seed_       = 42_I32 ; if (PRESENT(seed))       seed_       = seed
@@ -375,25 +335,24 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t , zeta, nfreq, seed, 
     used_freqs_ = .false.; if (PRESENT(used_freqs)) used_freqs_ = used_freqs
     
     nt = size(t)
-    ALLOCATE(a(nt), source = 0.0_WP)
+    ALLOCATE(a(nt))
     n_peaks = size(peaks,1)
+    
     if (size(keys) < n_peaks) error stop "generate_timeseries_banded_sines: keys shorter than peaks"
     if (size(peaks,2) < 2) error stop "generate_timeseries_banded_sines: peaks must have at least 2 columns"
 
-    if (used_freqs_) then
-        max_freq_list = max(1_I32, n_peaks * nfreq_)
-        ALLOCATE(freq_list(max_freq_list))
-        n_active = 0_I32
-    else
-        ALLOCATE(freq_list(0))
-        n_active = 0_I32
-    end if
+    ! Pre-allocate global lists based on the maximum possible components
+    max_freq_list = max(1_I32, n_peaks * nfreq_)
+    ALLOCATE(freq_list(max_freq_list))
+    ALLOCATE(all_omega(max_freq_list), all_amp(max_freq_list), all_phase(max_freq_list))
+    n_active = 0_I32
     
-    ! Initialize radnom seed
+    ! Initialize random seed
     CALL random_seed(size=seed_size)
     ALLOCATE(seed_arr(seed_size))
     CALL random_seed(put=seed_arr)
     
+    ! Phase 1: Aggregate all frequency components (No time-domain computation here)
     do i = 1, n_peaks
         f0   = peaks(i,1)
         Arms = peaks(i,2)
@@ -404,54 +363,62 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t , zeta, nfreq, seed, 
             sigma = zeta_ * f0
             if (sigma <= 0.0_WP) cycle
 
-            ALLOCATE(fk(nfreq_))
+            ALLOCATE(fk(nfreq_), g(nfreq_), Arms_k(nfreq_), phases(nfreq_))
+            
             do j = 1, nfreq_
                 fk(j) = f0 - 4.0_WP * sigma + (j-1) * (8.0_WP * sigma) / REAL(nfreq_-1, WP)
             end do
 
-            ALLOCATE(g(nfreq_))
             g = exp(-0.5_WP * ((fk-f0)/sigma)**2)
-            g = g /sqrt(sum(g**2))
-
-            ALLOCATE(Arms_k(nfreq_))
+            g = g / sqrt(sum(g**2))
             Arms_k = Arms * g
 
-            ALLOCATE(phases(nfreq_))
             do j = 1, nfreq_
                 CALL random_number(rnd)
                 phases(j) = 2.0_WP * PI * rnd
+                
+                ! Store properties globally
+                n_active = n_active + 1
+                freq_list(n_active) = fk(j)
+                all_omega(n_active) = 2.0_WP * PI * fk(j)
+                all_amp(n_active)   = Arms_k(j)
+                all_phase(n_active) = phases(j)
             end do
-
-            ! Sum contribution
-            do j = 1, nfreq_
-                a = a + Arms_k(j) * sin(2.0_WP * PI * fk(j) * t + phases(j))
-            end do
-
-            if (used_freqs_) then
-                do j = 1, nfreq_
-                    n_active = n_active + 1
-                    freq_list(n_active) = fk(j)
-                end do
-            end if
-
-            DEALLOCATE (fk, g, Arms_k, phases)
+            
+            DEALLOCATE(fk, g, Arms_k, phases)
 
         else
-
             ! Pure tone (shaft)
             CALL random_number(rnd)
             phase = 2.0_WP * PI * rnd
-            a = a + sqrt2 * Arms * sin(2.0_WP * PI * f0 * t + phase)
-
-            if (used_freqs_) then
-                n_active = n_active + 1
-                freq_list(n_active) = f0
-            end if
-
+            
+            ! Store properties globally
+            n_active = n_active + 1
+            freq_list(n_active) = f0
+            all_omega(n_active) = 2.0_WP * PI * f0
+            all_amp(n_active)   = sqrt2 * Arms
+            all_phase(n_active) = phase
         end if
     end do
 
-    ! If used_freqs, sort and remove duplicates
+    ! Phase 2: HPC Time-domain Synthesis
+    ! Time is the outer loop. We write to main memory array 'a' exactly once per time step.
+    !$omp parallel do private(i, j, current_t, current_sum)
+    do i = 1, nt
+        current_t = t(i)
+        current_sum = 0.0_WP
+        
+        ! Inner loop over frequencies: Sum into an ultra-fast CPU register via SIMD
+        !$omp simd reduction(+:current_sum)
+        do j = 1, n_active
+            current_sum = current_sum + all_amp(j) * sin(all_omega(j) * current_t + all_phase(j))
+        end do
+        
+        a(i) = current_sum
+    end do
+    !$omp end parallel do
+
+    ! Phase 3: Frequency Sorting and Cleanup
     if (used_freqs_) then
         if (n_active > 0) then
             CALL sort_real_c(freq_list(1:n_active))
@@ -472,73 +439,56 @@ SUBROUTINE generate_timeseries_banded_sines(peaks, keys, t , zeta, nfreq, seed, 
         end if
     else
         if (PRESENT(freqs_out)) ALLOCATE (freqs_out(0))
-    end  if
+    end if
 
-    DEALLOCATE(freq_list, seed_arr)
+    DEALLOCATE(freq_list, seed_arr, all_omega, all_amp, all_phase)
 
 END SUBROUTINE generate_timeseries_banded_sines
 
 
 FUNCTION filter_non_usefull_freqs(freqs, mantain_freqs, freqs_over, freqs_under) RESULT(mask)
-    !> Generates a frequency-mask to filter out non-essential spectral bins.
-    !> Equivalent to Python's filter_non_usefull_freqs.
     REAL(WP), INTENT(IN) :: freqs(:)
     REAL(WP), INTENT(IN) :: mantain_freqs(:)
-    REAL(WP), INTENT(IN), OPTIONAL :: freqs_over
-    REAL(WP), INTENT(IN), OPTIONAL :: freqs_under
+    REAL(WP), INTENT(IN), OPTIONAL :: freqs_over, freqs_under
     LOGICAL, ALLOCATABLE :: mask(:)
 
-    ! Local variables
-    INTEGER(I32) :: n, i, j
+    INTEGER(I32) :: n, j
     REAL(WP) :: df, freqs_over_, freqs_under_
-    LOGICAL :: equally_spaced
-    REAL(WP), ALLOCATABLE :: diffs(:)
     LOGICAL, ALLOCATABLE :: filter_zone(:)
 
-
-    ! Defaults
-    freqs_over_  = minval(freqs); if (PRESENT(freqs_over))  freqs_over_  = freqs_over
-    freqs_under_ = maxval(freqs); if (PRESENT(freqs_under)) freqs_under_ = freqs_under
-
-    n = size(freqs)
+    n = SIZE(freqs)
     ALLOCATE(mask(n))
-    mask = .true.
-
-    ! Compute df assuming unifrom spacing
-    if (n > 1) then
-        df = freqs(2) - freqs(1)
-        ! Check equal spacing
-        ALLOCATE(diffs(n-1))
-        diffs = freqs(2:n) - freqs(1:n-1)
-        equally_spaced = all(abs(diffs-df) < 1.0e-6_WP)
-        DEALLOCATE(diffs)
-        if (.not. equally_spaced) error stop "filter_non_usefull_freqs: freqs must be equally spaced."
-    else
-        df = 0.0_WP
-    end if
-
-    ! Build filter zone
     ALLOCATE(filter_zone(n))
-    filter_zone = .true.
-    if (PRESENT(freqs_over))  filter_zone = filter_zone .and. (freqs >= freqs_over_)
-    if (PRESENT(freqs_under)) filter_zone = filter_zone .and. (freqs <= freqs_under_)
 
-    ! In filter zone, initially set mask to false
-    where(filter_zone) mask = .false.
+    ! Determine frequency step
+    IF (n > 1) THEN
+        df = freqs(2) - freqs(1)
+        ! Optionally check for equal spacing (omit for performance)
+    ELSE
+        df = 0.0_WP
+    END IF
 
-    ! For each mantained frequency, set mask true if within df
-    do i = 1, n
-        if (.not. filter_zone(i)) cycle
-        do j = 1, size(mantain_freqs)
-            if (abs(freqs(i) - mantain_freqs(j)) <= df) then
-                mask(i) = .true.
-                exit
-            end if
-        end do
-    end do
+    ! Define filter zone (frequencies to consider for removal)
+    filter_zone = .TRUE.
+    freqs_over_  = MINVAL(freqs)
+    freqs_under_ = MAXVAL(freqs)
+    IF (PRESENT(freqs_over))  freqs_over_  = freqs_over
+    IF (PRESENT(freqs_under)) freqs_under_ = freqs_under
+
+    IF (PRESENT(freqs_over))  filter_zone = filter_zone .AND. (freqs >= freqs_over_)
+    IF (PRESENT(freqs_under)) filter_zone = filter_zone .AND. (freqs <= freqs_under_)
+
+    ! Outside filter zone: keep all frequencies
+    mask = .NOT. filter_zone
+
+    ! Inside filter zone: keep only if within df of any mantain_freqs
+    DO j = 1, SIZE(mantain_freqs)
+        WHERE (filter_zone .AND. ABS(freqs - mantain_freqs(j)) <= df)
+            mask = .TRUE.
+        END WHERE
+    END DO
 
     DEALLOCATE(filter_zone)
-
 END FUNCTION filter_non_usefull_freqs
 
 

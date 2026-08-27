@@ -1,7 +1,8 @@
 MODULE TurbineTypes
 
-USE Kinds, ONLY: WP, I32, PI
+USE omp_lib
 USE WindTurbine
+USE Kinds, ONLY: WP, I32, PI
 
 IMPLICIT NONE 
 PRIVATE
@@ -89,6 +90,7 @@ END SUBROUTINE init_DTU10MWMonopile
 
 SUBROUTINE compute_force_DTU10MWMonopile(self, filter_freqs, verbose, skipf)
     USE MathUtils, ONLY: remove_duplicate_nodes, compute_rfft
+    USE omp_lib
 
     CLASS(DTU10MWMonopile), INTENT(INOUT)        :: self
     LOGICAL               , INTENT(IN), OPTIONAL :: filter_freqs
@@ -96,125 +98,134 @@ SUBROUTINE compute_force_DTU10MWMonopile(self, filter_freqs, verbose, skipf)
     INTEGER(I32)          , INTENT(IN), OPTIONAL :: skipf
 
     ! Local variables
-    INTEGER(I32) :: Nm, Nn, Nt, Nnodes_wet, i, j, k, idx, Nfreqs
+    INTEGER(I32) :: Nm, Nn, nt, Nnodes_wet, i, j, k, v, global_idx, Nfreqs_new
     REAL(WP)     :: dt, F_memory_mb
-    LOGICAL     , ALLOCATABLE :: mask_duplicate(:), wet_nodes(:), mask_freqs_to_use(:)
-    REAL(WP)    , ALLOCATABLE :: mass(:), added_mass(:), mass_effective(:)
-    REAL(WP)    , ALLOCATABLE :: x_flat(:,:)         ! (Nm*Nn, 3)
-    REAL(WP)    , ALLOCATABLE :: acc_flat(:,:,:)     ! (nt, Nm*Nn, 3)
-    COMPLEX(WP) , ALLOCATABLE :: A(:,:,:)            ! FFT result (Nfreqs, Nnodes_wet, 3)
-    REAL(WP)    , ALLOCATABLE :: freqs(:)
-    INTEGER(I32), ALLOCATABLE :: idxs(:)
     LOGICAL      :: verbose_ = .false., filter_freqs_ = .true.
     INTEGER(I32) :: skipf_ = 1
 
+    LOGICAL     , ALLOCATABLE :: mask_duplicate(:), mask_freqs_to_use(:)
+    REAL(WP)    , ALLOCATABLE :: mass(:), added_mass(:), mass_effective(:)
+    REAL(WP)    , ALLOCATABLE :: x_flat(:,:), acc_flat(:,:,:)
+    COMPLEX(WP) , ALLOCATABLE :: A(:,:,:)
+    REAL(WP)    , ALLOCATABLE :: freqs(:), freqs_new(:)
+    COMPLEX(WP) , ALLOCATABLE :: F_new(:,:,:)
+    INTEGER(I32), ALLOCATABLE :: valid_j(:), valid_k(:)
+
+    
     ! Defaults
     if (PRESENT(filter_freqs)) filter_freqs_ = filter_freqs
     if (PRESENT(verbose))      verbose_      = verbose
     if (PRESENT(skipf))        skipf_        = skipf
 
-    ! Get dimensions
     Nm = self % Nmembers
     Nn = self % Nnodes
     nt = size(self % Time)
     dt = self % Time(2) - self % Time(1)
 
-    ! Remove duplicate nodes shared between consecutive members
     mask_duplicate = remove_duplicate_nodes(self % x_all, delete_last=.true.)
 
-    
-    ! Reshape x_all and acc to 2D/3D preserving (member, node) ordering
-    allocate(x_flat(Nm*Nn, 3))
-    allocate(acc_flat(nt, Nm*Nn, 3))
-    idx = 0
-    do i = 1, Nm
-        do j = 1, Nn
-            idx = idx + 1
-            x_flat(idx, :) = self % x_all(i, j, :)
+    ! Fuse masks: count all valid nodes at once
+    Nnodes_wet = 0
+    do j = 1, Nm
+        do k = 1, Nn
+            global_idx = (j - 1) * Nn + k
+            if (mask_duplicate(global_idx) .and. self % x_all(j, k, 3) <= 0.0_WP) then
+                Nnodes_wet = Nnodes_wet + 1
+            end if
         end do
     end do
 
-    do i = 1, nt
-        idx = 0
-        do j = 1, Nm
-            do k = 1, Nn
-                idx = idx + 1
-                acc_flat(i, idx, :) = self % acc(i, j, k, :)
-            end do
+    ALLOCATE(x_flat(Nnodes_wet, 3))
+    ALLOCATE(acc_flat(nt, Nnodes_wet, 3))
+    ALLOCATE(valid_j(Nnodes_wet), valid_k(Nnodes_wet))
+
+    ! Build valid index maps and extract coordinates
+    v = 1
+    do j = 1, Nm
+        do k = 1, Nn
+            global_idx = (j - 1) * Nn + k
+            if (mask_duplicate(global_idx) .and. self % x_all(j, k, 3) <= 0.0_WP) then
+                valid_j(v) = j
+                valid_k(v) = k
+                x_flat(v, :) = self % x_all(j, k, :)
+                v = v + 1
+            end if
         end do
     end do
 
-    ! Apply duplicate mask: build integer index array from logical mask
-    if (count(mask_duplicate) > 0) then
-        idxs = pack([(i, i = 1, Nm*Nn)], mask_duplicate)
-        x_flat = x_flat(idxs, :)
-        acc_flat = acc_flat(:, idxs, :)
-        DEALLOCATE(idxs)
-    else ! No nodes selected: return zero-sized arrays
-        x_flat = x_flat(0: -1, :)
-        acc_flat = acc_flat(:, 0: -1, :)
-    end if
-
-    ! Remove dry nodes (z > 0): keep nodes with z <= 0
-    wet_nodes = x_flat(:,3) <= 0.0_WP
-    Nnodes_wet = count(wet_nodes)
-    if (Nnodes_wet > 0) then
-        idxs = pack([(i, i = 1, size(x_flat,1))], wet_nodes)
-        x_flat = x_flat(idxs, :)
-        acc_flat = acc_flat(:, idxs, :)
-        DEALLOCATE(idxs)
-    else
-        x_flat = x_flat(0: -1, :)
-        acc_flat = acc_flat(:, 0: -1, :)
-    end if
-
-    ! Store in a new variable
     self % x = x_flat
 
-    ! Compute mass properties
+    ! Optimized flatten: temporal index i is the most intern to read RAM linearly
+    !$omp parallel do private(v, j, k, i)
+    do v = 1, Nnodes_wet
+        j = valid_j(v)
+        k = valid_k(v)
+        !$OMP SIMD
+        do i = 1, nt
+            acc_flat(i, v, 1) = self % acc(i, j, k, 1)
+            acc_flat(i, v, 2) = self % acc(i, j, k, 2)
+            acc_flat(i, v, 3) = self % acc(i, j, k, 3)
+        end do
+    end do
+    !$omp end parallel do
+
     CALL self % compute_mass(mass, added_mass)
+    ALLOCATE(mass_effective(Nnodes_wet))
     mass_effective = mass + added_mass
     DEALLOCATE(mass, added_mass)
 
-    ! Compute force via filter_freqs
     CALL compute_rfft(acc_flat, nt, dt, skipf=skipf_, remove_zero=.true., &
                       array_out=A, freqs=freqs)
-
-    
-    ! F = -A * mass (broadcast in frequency and direction)
     self % Freqs = freqs
+
     ALLOCATE(self % F(size(freqs), Nnodes_wet, 3))
-    do i = 1, size(freqs)
-        do j = 1, Nnodes_wet
-            self % F(i, j, :) = - A(i, j, :) * mass_effective(j)
-        end do
+
+    ! Vectorized force computation with OpenMP (implicit broadcast over frequencies)
+    !$omp parallel do private(j)
+    do j = 1, Nnodes_wet
+        self % F(:, j, 1) = - A(:, j, 1) * mass_effective(j)
+        self % F(:, j, 2) = - A(:, j, 2) * mass_effective(j)
+        self % F(:, j, 3) = - A(:, j, 3) * mass_effective(j)
     end do
+    !$omp end parallel do
 
-    ! Filter frequencies (optional)
-    if (filter_freqs) then
+    ! Manual filtering without 'RACK' to avoid memory reallocations
+    if (filter_freqs_) then
         mask_freqs_to_use = self % filter_frequencies()
-        idxs = pack([(i, i = 1, size(self%Freqs))], mask_freqs_to_use)
+        Nfreqs_new = count(mask_freqs_to_use)
+        
+        ALLOCATE(freqs_new(Nfreqs_new))
+        ALLOCATE(F_new(Nfreqs_new, Nnodes_wet, 3))
 
-        self % Freqs = self % Freqs(idxs)
-        self % F     = self % F(idxs, :, :)
+        v = 1
+        do i = 1, size(self%Freqs)
+            if (mask_freqs_to_use(i)) then
+                freqs_new(v) = self%Freqs(i)
+                F_new(v, :, :) = self%F(i, :, :)
+                v = v + 1
+            end if
+        end do
+        
+        CALL move_alloc(freqs_new, self%Freqs)
+        CALL move_alloc(F_new, self%F)
     end if
 
-    ! 6. Cleanup
-    deallocate(self%acc, self%Time, A, freqs, mass_effective, mask_duplicate, wet_nodes)
+    ! Cleanup
+    DEALLOCATE(self%acc, self%Time, A, freqs, mass_effective)
+    DEALLOCATE(mask_duplicate, valid_j, valid_k)
+    if (ALLOCATED(mask_freqs_to_use)) DEALLOCATE(mask_freqs_to_use)
 
-    ! 7. Summary print (if verbose)
-    Nfreqs = size(self%Freqs)
-    F_memory_mb = real(storage_size(self%F) * size(self%F) / 8) / 1024.0_WP / 1024.0_WP
-    if (verbose) then
+    ! Verbose summary
+    if (verbose_) then
+        F_memory_mb = real(storage_size(self%F) * size(self%F) / 8) / 1024.0_WP / 1024.0_WP
         print '(A)', repeat('=', 70)
         print '(A)', 'FORCE COMPUTATION COMPLETED'
         print '(A)', repeat('-', 68)
         print '(A,I6)',   'Nodes (wet): ', Nnodes_wet
-        print '(A,I6)',   'Frequencies: ', Nfreqs
+        print '(A,I6)',   'Frequencies: ', size(self%Freqs)
         print '(A,F6.2,A)', 'Memory (F):  ', F_memory_mb, ' MB'
         print '(A)', repeat('=', 70)
     end if
-
 
 END SUBROUTINE compute_force_DTU10MWMonopile
 
