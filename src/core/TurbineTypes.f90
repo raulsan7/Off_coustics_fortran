@@ -9,6 +9,10 @@ PRIVATE
 
 PUBLIC:: DTU10MWMonopile
 
+! ------------------------
+! Derived Types Definition
+! ------------------------
+! ---------- TURBINE MODEL 1 ---------- !
 TYPE, EXTENDS(WindTurbine_t) :: DTU10MWMonopile
     ! Physical and structural parameters specific to the DTU 10 MW Monopile
     REAL(WP) :: D        = 9.0_WP      ! [m] Base monopile outer diameter
@@ -20,14 +24,18 @@ TYPE, EXTENDS(WindTurbine_t) :: DTU10MWMonopile
     CHARACTER(len=:), ALLOCATABLE :: path_rpm
 
     CONTAINS
+    ! --- Deferred(abstract) procedures --- !
     PROCEDURE :: init                          => init_DTU10MWMonopile
     PROCEDURE :: compute_force                 => compute_force_DTU10MWMonopile
     PROCEDURE :: compute_mass                  => compute_mass_DTU10MWMonopile
     PROCEDURE :: filter_frequencies            => filter_frequencies_DTU10MWMonopile
-    ! PROCEDURE :: get_impedance_corrected_force => get_impedance_corrected_force_DTU10MWMonopile
+    PROCEDURE :: get_impedance_corrected_force => get_impedance_corrected_force_DTU10MWMonopile
 
 
 END TYPE DTU10MWMonopile
+
+
+! ---------- TURBINE MODEL 2 ---------- !
 
 
 CONTAINS
@@ -328,6 +336,56 @@ FUNCTION filter_frequencies_DTU10MWMonopile(self) RESULT(mask)
     DEALLOCATE(freqs_amp, keys, freqs_to_use)
 
 END FUNCTION filter_frequencies_DTU10MWMonopile
+
+
+FUNCTION get_impedance_corrected_force_DTU10MWMonopile(self, c) RESULT(corrected_F)
+    USE MathUtils, ONLY: alpha_hankel
+
+    CLASS(DTU10MWMonopile), INTENT(IN)  :: self
+    REAL(WP)              , INTENT(IN)  :: c
+    COMPLEX(WP)           , ALLOCATABLE :: corrected_F(:,:,:)
+
+    ! Local variables
+    REAL(WP)   , ALLOCATABLE :: k(:)
+    COMPLEX(WP), ALLOCATABLE :: alpha(:)
+    REAL(WP)   , ALLOCATABLE :: abs_alpha(:)
+    INTEGER(I32)             :: dim1, dim2, dim3, m, j, i
+
+    
+    dim1 = size(self % F, 1)
+    dim2 = size(self % F, 2)
+    dim3 = size(self % F, 3)
+    
+    ! Wave number vector
+    ALLOCATE(k(dim1))
+    k = (2.0_WP * PI * self % Freqs) / c
+
+    ! Compute correction factor once
+    alpha = alpha_hankel(k, self % D)
+
+    ! Precompute absolute value of alpha (real), allocate temporary
+    ALLOCATE(abs_alpha(dim1))
+    abs_alpha = ABS(alpha)
+
+    ! Allocate corrected_F with explicit shape
+    ALLOCATE(corrected_F(dim1, dim2, dim3))
+
+    ! Parallelize over planes (j,m) and vectorize the inner loop over i
+    !$omp parallel do collapse(2) default(shared) private(i,j,m)
+    do m = 1, dim3
+        do j = 1, dim2
+            !$omp simd
+            do i = 1, dim1
+                corrected_F(i, j, m) = self%F(i, j, m) * abs_alpha(i)
+            end do
+        end do
+    end do
+
+    DEALLOCATE(abs_alpha)
+
+END FUNCTION get_impedance_corrected_force_DTU10MWMonopile
+
+! ---------- TURBINE MODEL 2 ---------- !
 
 
 

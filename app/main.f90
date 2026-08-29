@@ -1,12 +1,15 @@
-! RUN COMMAND: fpm run --flag "-O3 -fopenmp"
+! RUN COMMAND: 
+! fpm clean                     
+! fpm run --flag "-O3 -fopenmp"
 
 PROGRAM MAIN
 
 USE Kinds
 USE IOUtils
 USE MathUtils
-USE WindTurbine
 USE TurbineTypes
+USE AcousticSolver
+USE MethodImages
 
 IMPLICIT NONE
 
@@ -16,6 +19,7 @@ CHARACTER(len=*), PARAMETER :: OP_path = "../OP_output/DTU_DeltaWind_mn_ws11.4.o
 INTEGER(I32)    , PARAMETER :: Nm = 8, Nn=5
 
 TYPE(DTU10MWMonopile) :: monopile
+TYPE(MethodImages_t)  :: solver
 
 REAL(WP) :: start_time, elapsed_display
 CHARACTER(len=8) :: tag
@@ -38,6 +42,7 @@ CALL monopile % init( &
 
 CALL monopile % read_input(verbose=.false.)
 CALL monopile % compute_force(filter_freqs=.true., verbose=.false.)
+CALL solver % init(monopile)
 
 ! print *, "==================================================="
 ! print *, " OFF-Coustics: Offshore Acoustic Simulator         "

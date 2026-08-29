@@ -530,4 +530,31 @@ SUBROUTINE sort_real_c(arr)
 END SUBROUTINE sort_real_c
 
 
+FUNCTION alpha_hankel(k, D) RESULT(alpha)
+    !> Analytical scattering correction coefficient $\alpha$ based on Hankel functions.
+
+    USE Kinds, ONLY: I1
+
+    REAL(WP), INTENT(in) :: k(:)            ! [1/m] Wavenumber array shape(nfreqs)
+    REAL(WP), INTENT(in) :: D               ! [m] Cylinder diameter
+
+    ! Local variables
+    COMPLEX(WP), ALLOCATABLE :: H0(:), H2(:), H1p(:), alpha(:)
+    REAL(WP)   , ALLOCATABLE :: ka(:)
+    INTEGER(I32)             :: Nfreqs
+
+    Nfreqs = size(k)
+    ka = k * D / 2.0_WP
+
+    ALLOCATE(H0(Nfreqs), H2(Nfreqs), H1p(Nfreqs), alpha(Nfreqs))
+        
+    H0 = CMPLX(bessel_jn(0, ka), -bessel_yn(0, ka), kind=WP)      ! H_0^(2) order 0 second specie (H_n^(2) = Jn + iYn)
+    H2 = CMPLX(bessel_jn(2, ka), -bessel_yn(2, ka), kind=WP)      ! H_2^(2) order 2 second specie (H_n^(2) = Jn + iYn)
+    H1p = 0.5_WP * (H0 - H2)                                      ! dH_1^(1) order 1 first specie (H_n^(1) = Jn - iYn)
+
+    alpha = -3.0_WP * I1 /(PI * ka**2 * H1p)
+
+END FUNCTION alpha_hankel
+
+
 END MODULE MathUtils

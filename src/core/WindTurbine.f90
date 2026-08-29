@@ -68,7 +68,7 @@ TYPE, ABSTRACT :: WindTurbine_t
     PROCEDURE(compute_force_i)                , DEFERRED :: compute_force
     PROCEDURE(compute_mass_i)                 , DEFERRED :: compute_mass
     PROCEDURE(filter_frequencies_i)           , DEFERRED :: filter_frequencies
-    ! PROCEDURE(get_impedance_corrected_force_i), DEFERRED :: get_impedance_corrected_force
+    PROCEDURE(get_impedance_corrected_force_i), DEFERRED :: get_impedance_corrected_force
 
 END TYPE WindTurbine_t
 
@@ -108,10 +108,10 @@ END INTERFACE
 
 ! Impedance correction
 ABSTRACT INTERFACE
-    FUNCTION get_impedance_corrected_force_i(self, c_wat) RESULT(corrected_force)
+    FUNCTION get_impedance_corrected_force_i(self, c) RESULT(corrected_force)
         IMPORT :: WindTurbine_t, WP
-        CLASS(WindTurbine_t), INTENT(INOUT) :: self
-        REAL(WP), INTENT(IN) :: c_wat
+        CLASS(WindTurbine_t), INTENT(IN) :: self
+        REAL(WP), INTENT(IN) :: c
         COMPLEX(WP), ALLOCATABLE :: corrected_force(:,:,:)
     END FUNCTION get_impedance_corrected_force_i
 END INTERFACE
