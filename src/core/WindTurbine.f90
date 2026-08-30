@@ -390,9 +390,6 @@ END SUBROUTINE save_parameters
 SUBROUTINE check_acoustic_solver(self)
     CLASS(WindTurbine_t), INTENT(IN) :: self
 
-    LOGICAL :: is_allocated
-
-
     if (.not. ALLOCATED(self % acoustic_solver)) then
         error stop "An acoustic solver has to be assigned before pressure computations."
     end if
