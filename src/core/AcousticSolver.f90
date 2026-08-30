@@ -25,6 +25,7 @@ TYPE, ABSTRACT :: AcousticSolver_t
     ! --- Deferred(abstract) procedures --- !
     PROCEDURE(get_name_i)        , DEFERRED :: get_name
     PROCEDURE(compute_pressure_i), DEFERRED :: compute_pressure
+    PROCEDURE(save_parameters_i) , DEFERRED :: save_parameters
 
 END TYPE AcousticSolver_t
 
@@ -41,7 +42,6 @@ ABSTRACT INTERFACE
     END FUNCTION get_name_i
 END INTERFACE
 
-
 ! Compute pressure
 ABSTRACT INTERFACE
     SUBROUTINE compute_pressure_i(self, observers, block_size, total_pressure)
@@ -51,6 +51,15 @@ ABSTRACT INTERFACE
         INTEGER(I32)            , INTENT(IN), OPTIONAL :: block_size            ! [Pa] Pressure field (Nfreqs, Nobs)
         COMPLEX(WP), ALLOCATABLE, INTENT(OUT)          :: total_pressure(:,:)   ! [-] Number of observers to process simultaneously
     END SUBROUTINE compute_pressure_i
+END INTERFACE
+
+! Save parameters
+ABSTRACT INTERFACE
+    SUBROUTINE save_parameters_i(self, unit_num)
+        IMPORT :: AcousticSolver_t, I32
+        CLASS(AcousticSolver_t) , INTENT(INOUT) :: self
+        INTEGER(I32), INTENT(IN)                :: unit_num
+    END SUBROUTINE save_parameters_i
 END INTERFACE
 
 

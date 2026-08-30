@@ -32,7 +32,7 @@ REAL(WP), PARAMETER :: P_REF          = 1.0E-6_WP       ! [Pa] Reference pressur
 ! ----------------------------------------
 ! Other parameters
 ! ----------------------------------------
-LOGICAL , PARAMETER :: IN_CLUSTER = .false.             ! [-] Wheter we are runnning in a cluster or not
+LOGICAL , PARAMETER :: IN_CLUSTER = .true.             ! [-] Wheter we are runnning in a cluster or not
 
 
 END MODULE Kinds

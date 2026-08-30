@@ -52,6 +52,7 @@ TYPE, EXTENDS(AcousticSolver_t) :: MethodImages_t
     ! --- Deferred(abstract) procedures --- !
     PROCEDURE :: get_name           => get_name_MethodImages
     PROCEDURE :: compute_pressure   => compute_pressure_MethodImages
+    PROCEDURE :: save_parameters    => save_parameters_MethodImages
 
 END TYPE MethodImages_t
 
@@ -97,7 +98,7 @@ SUBROUTINE init_MethodImages(self, turbines, N_images, c_wat, rho_wat, &
         if (ALLOCATED(self % turbines)) DEALLOCATE(self % turbines)
         ALLOCATE(self % turbines, source = turbines)
     end if
-
+    
     CALL self % build_all_image_system()
 
 END SUBROUTINE init_MethodImages
@@ -138,14 +139,130 @@ END FUNCTION get_name_MethodImages
 
 
 SUBROUTINE compute_pressure_MethodImages(self, observers, block_size, total_pressure)
-        CLASS(MethodImages_t)   , INTENT(INOUT)        :: self
-        REAL(WP)                , INTENT(IN)           :: observers(:,:)        ! [m] Observers coords (Nobs,3)
-        INTEGER(I32)            , INTENT(IN), OPTIONAL :: block_size            ! [Pa] Pressure field (Nfreqs, Nobs)
-        COMPLEX(WP), ALLOCATABLE, INTENT(OUT)          :: total_pressure(:,:)   ! [-] Number of observers to process simultaneously
+    CLASS(MethodImages_t)   , INTENT(INOUT)        :: self
+    REAL(WP)                , INTENT(IN)           :: observers(:,:)        ! [m] Observers coords (Nobs,3)
+    INTEGER(I32)            , INTENT(IN), OPTIONAL :: block_size            ! [-] Number of observers to process simultaneously
+    COMPLEX(WP), ALLOCATABLE, INTENT(OUT)          :: total_pressure(:,:)   ! [Hz] pressure array(Nfreqs, Nobs)
 
-    print*, self % cluster, observers, block_size, total_pressure
+    ! Local variables
+    INTEGER(I32) :: nobs, nf, nturb, nt, bs, n_chunks, ichunk
+    INTEGER(I32) :: istart, iend, nb, i
+    TYPE(ImageSystem_t) :: img
+    REAL(WP), ALLOCATABLE :: freqs(:)
+    COMPLEX(WP), ALLOCATABLE :: p_block(:,:)
+
+    ! Defaults
+    bs = 256_I32; if (PRESENT(block_size)) bs = block_size
+
+    ! Basic checks
+    nobs = SIZE(observers, 1)
+    if (nobs <= 0) then
+        allocate(total_pressure(0,0))
+        return
+    end if
+
+    if (SIZE(observers, 2) /= 3) error stop "compute_pressure_MethodImages: observers must have shape (N,3)"
+
+    ! Number of frequencies (take from first turbine)
+    if (.not. ALLOCATED(self % turbines)) then
+        error stop "compute_pressure_MethodImages: no turbines defined"
+    end if
+
+    nturb = SIZE(self % turbines)
+    freqs = self % turbines(1) % Freqs
+    nf = SIZE(freqs)
+
+    allocate(total_pressure(nf, nobs))
+    total_pressure = (0.0_WP, 0.0_WP)
+
+    if (.not. self % cluster) bs = 1
+
+    if (self % cluster) then
+        do nt = 1, nturb
+            img = self % image_system(nt)
+
+            ! Print turbine header if more than one turbine
+            if (nturb > 1) then
+                print '(A,I0,A,I0,A)', 'Turbine ', nt, '/', nturb, ':'
+                flush(6)
+            end if
+
+            n_chunks = (nobs + bs - 1) / bs
+
+            !$OMP PARALLEL DO DEFAULT(SHARED) &
+            !$OMP PRIVATE(ichunk, istart, iend, nb, p_block)&
+            !$OMP SHARED(img, freqs, n_chunks, nobs, total_pressure, self)
+            do ichunk = 0, n_chunks - 1
+                istart = ichunk * bs + 1
+                iend   = min(istart + bs - 1, nobs)
+                nb     = iend - istart + 1
+
+                ! In OpenMP builds, avoid printing per-block progress from multiple threads
+                ! because the output is interleaved and looks chaotic. Keep it only in serial mode.
+                if (omp_get_max_threads() <= 1) then
+                    print '(A,I0,A,I0,A,I0,A,I0,A)', '  Progress: Block ', ichunk+1, '/', n_chunks, &
+                                                    ' (', iend, '/', nobs, ' observers)'
+                    flush(6)
+                end if
+
+                ! Call kernel for this chunk (p_block will be allocated by the routine)
+                call self % dipole_pressure_images(observers(istart:iend, :), freqs, img % nodes_pos, &
+                                                   img % force, img % BC_all, p_block)
+
+                ! Accumulate results into the global array (non-overlapping slices -> no race)
+                total_pressure(:, istart:iend) = total_pressure(:, istart:iend) + p_block(:, 1:nb)
+
+                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+            end do
+            !$OMP END PARALLEL DO
+        end do
+    else
+        do nt = 1, nturb
+            img = self % image_system(nt)
+
+            ! Print turbine header if more than one turbine
+            if (nturb > 1) then
+                print '(A,I0,A,I0,A)', 'Turbine ', nt, '/', nturb, ':'
+            end if
+
+            ! Serial: loop observers (keep 2D slice for compatibility)
+            do i = 1, nobs
+                call self % dipole_pressure_images(observers(i:i, :), freqs, img % nodes_pos, &
+                                                img % force, img % BC_all, p_block)
+                total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
+
+                if (ALLOCATED(p_block)) DEALLOCATE(p_block)
+
+                ! Print progress every 100 observers
+                if (mod(i, 100) == 0) then
+                    print '(A,I0,A,I0)', '  Progress: ', i, '/', nobs
+                    flush(6)
+                end if
+            end do
+        end do
+    end if
 
 END SUBROUTINE compute_pressure_MethodImages
+
+
+SUBROUTINE save_parameters_MethodImages(self, unit_num)
+        CLASS(MethodImages_t) , INTENT(INOUT) :: self
+        INTEGER(I32), INTENT(IN)              :: unit_num
+
+        write(unit_num, *) "N_images:", self % N_images
+        write(unit_num, *) "c_wat:",    self % c
+        write(unit_num, *) "rho_wat:",  self % rho
+        write(unit_num, *) "Upper_BC:", self % Upper_BC
+        write(unit_num, *) "Lower_BC:", self % Lower_BC
+        write(unit_num, *) "Upper_HBC:", self % Upper_HBC
+        write(unit_num, *) "Lower_HBC:", self % Lower_HBC
+        write(unit_num, *) "up_R:", self % up_R
+        write(unit_num, *) "lw_R:", self % lw_R
+        write(unit_num, *) "eps:", self % eps
+        write(unit_num, *) "p_ref:", self % p_ref
+        write(unit_num, *) "cluster:", self % cluster
+
+END SUBROUTINE save_parameters_MethodImages
 
 
 ! ---------- HELPERS ---------- !
@@ -160,6 +277,7 @@ SUBROUTINE build_all_image_system(self)
     
     if (ALLOCATED(self % image_system)) deallocate(self % image_system)
     allocate(self % image_system(num_turbines))
+
     
     do i = 1, num_turbines
         F_corr = self % turbines(i) % get_impedance_corrected_force(self % c)
@@ -182,36 +300,37 @@ SUBROUTINE build_image_system(self, nodes_pos_real, force, img_sys)
 
     Nnodes = size(nodes_pos_real, 1)
 
-    ! Ensure shape standard: (Nfreqs, 3, Nnodes)
+    
+    ! Ensure shape standard: (Nfreqs, Nnodes, 3)
     if (size(force, 3) == 3 .and. size(force, 2) == Nnodes) then
-        Nfreqs = size(force, 1)
-        allocate(force_prep(Nfreqs, 3, Nnodes))
-        do j = 1, Nnodes
-            force_prep(:, 1, j) = force(:, j, 1)
-            force_prep(:, 2, j) = force(:, j, 2)
-            force_prep(:, 3, j) = force(:, j, 3)
-        end do
-    else
         force_prep = force
+    else
+        Nfreqs = size(force, 1)
+        allocate(force_prep(Nfreqs, Nnodes, 3))
+        do j = 1, Nnodes
+            force_prep(:, j, 1) = force(:, 1, j)
+            force_prep(:, j, 2) = force(:, 2, j)
+            force_prep(:, j, 3) = force(:, 3, j)
+        end do
     end if
 
     zi = nodes_pos_real(:, 3)
-
+    
     CALL self % method_of_images(zi, force_prep, z_all, Force_out, parent, BC_all)
 
     total_nodes = size(z_all)
-    allocate(img_sys%nodes_pos(3, total_nodes))
-    allocate(img_sys%force(size(Force_out, 1), 3, total_nodes))
-    allocate(img_sys%BC_all(total_nodes))
+    allocate(img_sys % nodes_pos(total_nodes, 3))
+    allocate(img_sys % force(size(Force_out, 1), total_nodes, 3))
+    allocate(img_sys % BC_all(total_nodes))
 
     do j = 1, total_nodes
-        img_sys%nodes_pos(1, j) = nodes_pos_real(parent(j), 1)
-        img_sys%nodes_pos(2, j) = nodes_pos_real(parent(j), 2)
-        img_sys%nodes_pos(3, j) = z_all(j)
+        img_sys % nodes_pos(j, 1) = nodes_pos_real(parent(j), 1)
+        img_sys % nodes_pos(j, 2) = nodes_pos_real(parent(j), 2)
+        img_sys % nodes_pos(j, 3) = z_all(j)
     end do
-
-    img_sys%force  = Force_out
-    img_sys%BC_all = BC_all
+    
+    img_sys % force  = Force_out
+    img_sys % BC_all = BC_all
 
 END SUBROUTINE build_image_system
 
@@ -251,13 +370,12 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
     COMPLEX(WP), ALLOCATABLE :: F_upper(:,:), F_lower(:,:)
     CHARACTER(len=5) :: last_plane_upper, last_plane_lower
     INTEGER(I32) :: BC_u, BC_l
-
-
+    
     Nnodes = size(zi); Nfreqs = size(Force, 1)
     total_nodes = Nnodes * (1 + 2 * self % N_images)
-
+    
     ALLOCATE(z_all(total_nodes))
-    ALLOCATE(Force_out(Nfreqs, 3, total_nodes))
+    ALLOCATE(Force_out(Nfreqs, total_nodes, 3))
     ALLOCATE(parent(total_nodes))
     ALLOCATE(BC_all(total_nodes))
     ALLOCATE(F_upper(Nfreqs, 3))
@@ -267,15 +385,15 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
     do i_node = 1, Nnodes
         ! Real dipole nodes
         z_all(idx)         = zi(i_node)
-        Force_out(:,:,idx) = Force(:,:,i_node)
+        Force_out(:,idx,:) = Force(:,i_node,:)
         BC_all(idx)        = 1
         parent(idx)        = i_node
         idx                = idx + 1
 
         z_upper = zi(i_node)
         z_lower = zi(i_node)
-        F_upper = Force(:,:,i_node)
-        F_lower = Force(:,:,i_node)
+        F_upper = Force(:,i_node,:)
+        F_lower = Force(:,i_node,:)
 
         last_plane_upper = "upper"
         last_plane_lower = "lower"
@@ -296,7 +414,7 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
             F_upper            = F_upper * self % up_R
 
             z_all(idx)         = z_upper
-            Force_out(:,:,idx) = F_upper
+            Force_out(:,idx,:) = F_upper
             BC_all(idx)        = BC_u
             parent(idx)        = i_node
             idx                = idx + 1
@@ -315,11 +433,11 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
             F_lower(:,3) = -1.0_WP * F_lower(:,3)
             F_lower      = F_lower * self % lw_R
 
-            z_all(idx)         = z_lower
-            Force_out(:,:,idx) = F_lower
-            BC_all(idx)        = BC_l
-            parent(idx)        = i_node
-            idx                = idx + 1
+            z_all(idx)          = z_lower
+            Force_out(:,idx, :) = F_lower
+            BC_all(idx)         = BC_l
+            parent(idx)         = i_node
+            idx                 = idx + 1
         end do
     end do
 
@@ -327,48 +445,73 @@ SUBROUTINE method_of_images(self, zi, Force, z_all, Force_out, parent, BC_all)
 END SUBROUTINE method_of_images
 
 
-SUBROUTINE dipole_pressure_images(self,obs_pos, freqs, nodes_pos, force, BC_all, p_out)
+SUBROUTINE dipole_pressure_images(self, obs_pos, freqs, nodes_pos, force, BC_all, p_out)
     USE Kinds, ONLY: I1, PI
-    CLASS(MethodImages_t), INTENT(IN)         :: self
-     REAL(WP), INTENT(IN)                  :: obs_pos(3)
-     REAL(WP), INTENT(IN)                  :: freqs(:)
-     REAL(WP), INTENT(IN)                  :: nodes_pos(:,:)     ! (Ntotal, 3)
-     COMPLEX(WP), INTENT(IN)               :: force(:,:,:)       ! (Nfreqs, Ntotal, 3)
-     INTEGER(I32), INTENT(IN)              :: BC_all(:)          ! (Ntotal)
-     COMPLEX(WP), ALLOCATABLE, INTENT(OUT) :: p_out(:)           ! (Nfreqs)
+    CLASS(MethodImages_t), INTENT(IN)       :: self
+    REAL(WP), INTENT(IN)                    :: obs_pos(:,:)     ! (Nob, 3)  ; caller must pass a 2D slice (Nob,3)
+    REAL(WP), INTENT(IN)                    :: freqs(:)         ! (Nfreqs)
+    REAL(WP), INTENT(IN)                    :: nodes_pos(:,:)   ! (Ntotal,3)
+    COMPLEX(WP), INTENT(IN)                 :: force(:,:,:)     ! (Nfreqs, Ntotal, 3)
+    INTEGER(I32), INTENT(IN)                :: BC_all(:)        ! (Ntotal)
+    COMPLEX(WP), ALLOCATABLE, INTENT(OUT)   :: p_out(:,:)       ! (Nfreqs, Nob)
 
     ! Local variables
-    INTEGER(I32) :: Nfreqs, Ntotal, f, j
-    REAL(WP) :: rx, ry, rz, r, r_inv, k
-    COMPLEX(WP) :: F_dot_r, term1, green
+    INTEGER(I32) :: Nfreqs, Ntotal, Nob
+    INTEGER(I32) :: j, f, k
+    REAL(WP), ALLOCATABLE :: dx(:), dy(:), dz(:), r(:), r_inv(:), k_wave(:), BC_real(:)
+    REAL(WP) :: sx, sy, sz, epsv
+    COMPLEX(WP) :: F_dot_r, term1, green, fx, fy, fz
+    REAL(WP) :: fourpi
 
+    ! Dimensions
+    Nfreqs = SIZE(freqs)
+    Ntotal = SIZE(nodes_pos, 1)
+    Nob    = SIZE(obs_pos, 1)
 
-    Nfreqs = size(freqs); Ntotal = size(nodes_pos, 1)
-    ALLOCATE(p_out(Nfreqs))
+    epsv = self % eps
+    fourpi = 4.0_WP * PI
+
+    ALLOCATE(p_out(Nfreqs, Nob))
     p_out = (0.0_WP, 0.0_WP)
+    k_wave = 2.0_WP * PI * freqs / self % c
+    BC_real = REAL(BC_all, WP)
+
+    ! Temporary arrays to avoid recomputing distances for each frequency
+    ALLOCATE(dx(Nob), dy(Nob), dz(Nob), r(Nob), r_inv(Nob))
 
     do j = 1, Ntotal
-        rx = obs_pos(1) - nodes_pos(j,1)
-        rx = obs_pos(2) - nodes_pos(j,2)
-        rx = obs_pos(3) - nodes_pos(j,3)
+        sx = nodes_pos(j, 1)
+        sy = nodes_pos(j, 2)
+        sz = nodes_pos(j, 3)
 
-        r = sqrt(rx*rx + ry*ry + rz*rz)
-        if (r < self % eps) r = self % eps
-        r_inv = 1.0_WP / r
-
-        do f = 1, Nfreqs
-            k = 2.0_WP * PI * freqs(f) / self % c
-
-            F_dot_r = (force(f,j,1) * rx + force(f,j,2) + force(f,j,3)*rz) * r_inv
-            term1   = -I1 * k + r_inv
-            green   = exp(CMPLX(0.0_WP, k * r, kind=WP)) / (4.0_WP * PI *r)
-
-            p_out(f) = p_out(f) + F_dot_r * term1 * green * REAL(BC_all(j), WP)
+        ! Compute relative vectors and distances for this source to all observers (vectorizable)
+        !$OMP SIMD
+        do k = 1, Nob
+            dx(k) = obs_pos(k, 1) - sx
+            dy(k) = obs_pos(k, 2) - sy
+            dz(k) = obs_pos(k, 3) - sz
+            r(k)  = sqrt(dx(k)*dx(k) + dy(k)*dy(k) + dz(k)*dz(k))
+            if (r(k) < epsv) r(k) = epsv
+            r_inv(k) = 1.0_WP / r(k)
         end do
+
+        ! Loop over frequencies and accumulate contributions (inner loop vectorized over observers)
+        do f = 1, Nfreqs
+            fx = force(f, j, 1)
+            fy = force(f, j, 2)
+            fz = force(f, j, 3)
+            !$OMP SIMD
+            do k = 1, Nob
+                F_dot_r = (fx * dx(k) + fy * dy(k) + fz * dz(k)) * r_inv(k)
+                term1   = -I1 * k_wave(f) + r_inv(k)
+                green   = exp(I1* k_wave(f) * r(k)) / (fourpi * r(k))
+                p_out(f, k) = p_out(f, k) + F_dot_r * term1 * green * BC_real(j)
+            end do
+        end do
+
     end do
 
-
-
+    DEALLOCATE(dx, dy, dz, r, r_inv)
 
 END SUBROUTINE dipole_pressure_images
 

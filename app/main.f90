@@ -16,10 +16,10 @@ IMPLICIT NONE
 ! Local variables
 CHARACTER(len=*), PARAMETER :: SD_path = "../OP_output/DTU_DeltaWind_mn_ws11.4.SD.sum.yaml"
 CHARACTER(len=*), PARAMETER :: OP_path = "../OP_output/DTU_DeltaWind_mn_ws11.4.outb"
-INTEGER(I32)    , PARAMETER :: Nm = 8, Nn=5
+INTEGER(I32)    , PARAMETER :: Nm = 8, Nn = 5, unit_num = 10
 
 TYPE(DTU10MWMonopile) :: monopile
-TYPE(MethodImages_t)  :: solver
+TYPE(MethodImages_t)  :: acoustic_model
 
 REAL(WP) :: start_time, elapsed_display
 CHARACTER(len=8) :: tag
@@ -42,37 +42,12 @@ CALL monopile % init( &
 
 CALL monopile % read_input(verbose=.false.)
 CALL monopile % compute_force(filter_freqs=.true., verbose=.false.)
-CALL solver % init(monopile)
+CALL acoustic_model % init(monopile)
+CALL monopile % set_acoustic_method(acoustic_model)
 
-! print *, "==================================================="
-! print *, " OFF-Coustics: Offshore Acoustic Simulator         "
-! print *, " Version: 0.1.0 (HPC Fortran Edition)              "
-! print *, "==================================================="
-! print *, "-> Precision (wp) initialized."
-! print *, "-> Environment:"
-! print '(A, F0.2, A)', "   * Water Density : ", RHO_WATER, " kg/m^3"
-! print '(A, F0.2, A)', "   * Sound Speed   : ", SPEED_OF_SOUND, " m/s"
-! print *, "---------------------------------------------------"
+CALL monopile % run_all()
 
-! ---------------------------------------------------------
-! 2. Geometry and Kinematics Loading
-! ---------------------------------------------------------
-
-
-! ---------------------------------------------------------
-! 3. Acoustic Solver Execution (To be implemented)
-! ---------------------------------------------------------
-! print *, "-> Assembling acoustic solvers..."
-! TODO: initialize method_images or analytical_normal_modes
-! TODO: call solver%compute_pressure_field()
-
-
-! ---------------------------------------------------------
-! 4. Results Output and Cleanup (To be implemented)
-! ---------------------------------------------------------
-! print *, "-> Exporting HDF5 results..."
-! TODO: call h5_exporter%write_results()
-
+! ---------- DISPLAY ELPASED TIME ---------- !
 CALL format_elapsed(start_time, elapsed_display, tag)
 
 print*,' '
