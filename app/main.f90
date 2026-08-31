@@ -1,15 +1,13 @@
 ! RUN COMMAND: 
 ! fpm clean                     
-! fpm run --flag "-O3 -fopenmp"
+! fpm run --flag "-O3 -fopenmp" (only if IN_CLUSTER = .true. in Kinds.f90 else fpm run)
 
 PROGRAM MAIN
 
-USE Kinds
-USE IOUtils
-USE MathUtils
-USE TurbineTypes
-USE AcousticSolver
-USE MethodImages
+USE Kinds, ONLY: I32, WP
+USE TurbineTypes, ONLY: DTU10MWMonopile
+USE MethodImages, ONLY: MethodImages_t
+USE MathUtils, ONLY: format_elapsed
 
 IMPLICIT NONE
 
@@ -33,19 +31,19 @@ CALL monopile % init( &
         rootname  = "DTU_DeltaWind_mn_ws11.4", &
         output_dir= "../OP_output/", &
         save_dir  = "./turbine_acoustic_data/", &
-        WindSpeed = 11.4_dp, &
-        WindDir   = 0.0_dp, &
-        Depth     = 30.0_dp, &
+        WindSpeed = 11.4_WP, &
+        WindDir   = 0.0_WP, &
+        Depth     = 30.0_WP, &
         Nmembers  = 8, &
         Nnodes    = 5, &
         debug    = .true. )
 
-CALL monopile % read_input(verbose=.false.)
-CALL monopile % compute_force(filter_freqs=.true., verbose=.false.)
-CALL acoustic_model % init(monopile)
-CALL monopile % set_acoustic_method(acoustic_model)
+CALL monopile % read_input(verbose=.true.)
+CALL monopile % compute_force(filter_freqs=.true., verbose=.true.)
+CALL acoustic_model % init(monopile, debug = .true.)
 
-CALL monopile % run_all()
+CALL acoustic_model % run_all()
+
 
 ! ---------- DISPLAY ELPASED TIME ---------- !
 CALL format_elapsed(start_time, elapsed_display, tag)

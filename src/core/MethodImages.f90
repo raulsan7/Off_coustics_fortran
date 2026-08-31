@@ -1,14 +1,14 @@
 MODULE MethodImages
 
 USE omp_lib
-USE Kinds, ONLY: WP, I32
+USE Kinds, ONLY: WP, I32, PI
 USE WindTurbine, ONLY: WindTurbine_t
 USE AcousticSolver, ONLY: AcousticSolver_t
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: MethodImages_t, WindTurbine_t
+PUBLIC :: MethodImages_t
 
 
 ! ------------------------
@@ -33,8 +33,7 @@ TYPE, EXTENDS(AcousticSolver_t) :: MethodImages_t
     REAL(WP)     :: Lower_HBC        = -30.0        ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
     REAL(WP)     :: up_R             = 1.0_WP       ! [-] Attenuation coefficient for upper boundary reflections
     REAL(WP)     :: lw_R             = 0.5_WP       ! [-] Attenuation coefficient for lower boundary reflections
-
-    CLASS(WindTurbine_t), ALLOCATABLE :: turbines(:) 
+ 
     TYPE(ImageSystem_t) , ALLOCATABLE :: image_system(:)
 
     CONTAINS
@@ -48,6 +47,7 @@ TYPE, EXTENDS(AcousticSolver_t) :: MethodImages_t
     PROCEDURE :: restore_default_images
     PROCEDURE :: method_of_images
     PROCEDURE :: dipole_pressure_images
+    PROCEDURE :: run_sphere
 
     ! --- Deferred(abstract) procedures --- !
     PROCEDURE :: get_name           => get_name_MethodImages
@@ -62,7 +62,7 @@ CONTAINS
 ! ---------- DEFERRED ---------- !
 SUBROUTINE init_MethodImages(self, turbines, N_images, c_wat, rho_wat, &
                              Upper_BC, Lower_BC, Upper_HBC, Lower_HBC, &
-                             attenuation_upper, attenuation_lower, eps, p_ref, cluster)
+                             attenuation_upper, attenuation_lower, eps, p_ref, cluster, debug)
 
     CLASS(MethodImages_t), INTENT(INOUT)        :: self
     CLASS(WindTurbine_t) , INTENT(IN), OPTIONAL :: turbines(:)
@@ -72,7 +72,7 @@ SUBROUTINE init_MethodImages(self, turbines, N_images, c_wat, rho_wat, &
     REAL(WP)    , INTENT(IN), OPTIONAL          :: Upper_HBC, Lower_HBC
     REAL(WP)    , INTENT(IN), OPTIONAL          :: attenuation_upper, attenuation_lower
     REAL(WP)    , INTENT(IN), OPTIONAL          :: eps, p_ref
-    LOGICAL     , INTENT(IN), OPTIONAL          :: cluster
+    LOGICAL     , INTENT(IN), OPTIONAL          :: cluster, debug
 
 
     ! Defaults
@@ -88,6 +88,7 @@ SUBROUTINE init_MethodImages(self, turbines, N_images, c_wat, rho_wat, &
     if (PRESENT(eps))               self % eps       = eps
     if (PRESENT(p_ref))             self % p_ref     = p_ref
     if (PRESENT(cluster))           self % cluster   = cluster
+    if (PRESENT(debug))             self % debug      = debug
 
     
     self % default_N_images = self % N_images
@@ -106,7 +107,7 @@ END SUBROUTINE init_MethodImages
 
 SUBROUTINE init_MethodImages_single(self, turbine, N_images, c_wat, rho_wat, &
                                     Upper_BC, Lower_BC, Upper_HBC, Lower_HBC, &
-                                    attenuation_upper, attenuation_lower, eps, p_ref, cluster)
+                                    attenuation_upper, attenuation_lower, eps, p_ref, cluster, debug)
 
     CLASS(MethodImages_t), INTENT(INOUT) :: self
     CLASS(WindTurbine_t) , INTENT(IN)    :: turbine
@@ -116,7 +117,7 @@ SUBROUTINE init_MethodImages_single(self, turbine, N_images, c_wat, rho_wat, &
     INTEGER(I32), INTENT(IN), OPTIONAL   :: Upper_BC, Lower_BC
     REAL(WP)    , INTENT(IN), OPTIONAL   :: attenuation_upper, attenuation_lower
     REAL(WP)    , INTENT(IN), OPTIONAL   :: eps, p_ref
-    LOGICAL     , INTENT(IN), OPTIONAL   :: cluster
+    LOGICAL     , INTENT(IN), OPTIONAL   :: cluster, debug
 
 
     if (allocated(self%turbines)) deallocate(self%turbines)
@@ -126,7 +127,7 @@ SUBROUTINE init_MethodImages_single(self, turbine, N_images, c_wat, rho_wat, &
     call init_MethodImages(self, N_images=N_images, c_wat=c_wat, rho_wat=rho_wat, &
                            Upper_BC=Upper_BC, Lower_BC=Lower_BC, Upper_HBC=Upper_HBC, Lower_HBC=Lower_HBC, &
                            attenuation_upper=attenuation_upper, attenuation_lower=attenuation_lower, &
-                           eps=eps, p_ref=p_ref, cluster=cluster)
+                           eps=eps, p_ref=p_ref, cluster=cluster, debug=debug)
 
 END SUBROUTINE init_MethodImages_single
 
@@ -514,5 +515,86 @@ SUBROUTINE dipole_pressure_images(self, obs_pos, freqs, nodes_pos, force, BC_all
     DEALLOCATE(dx, dy, dz, r, r_inv)
 
 END SUBROUTINE dipole_pressure_images
+
+
+! ---------- RUN SPHERE ---------- !
+SUBROUTINE run_sphere(self, r, n_theta, nz, center, block_size)
+    CLASS(MethodImages_t), INTENT(INOUT) :: self
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: r
+    INTEGER(I32), INTENT(IN), OPTIONAL  :: n_theta
+    INTEGER(I32), INTENT(IN), OPTIONAL  :: nz
+    REAL(WP)    , INTENT(IN), OPTIONAL  :: center(3)
+    INTEGER(I32), INTENT(IN), OPTIONAL  :: block_size
+
+    ! Local variables
+    COMPLEX(WP), ALLOCATABLE :: p(:,:)
+    REAL(WP)   , ALLOCATABLE :: observers_(:,:)
+    REAL(WP)                 :: r_, center_(3), max_dist, current_dist
+    REAL(WP)                 :: dz, dtheta, zc, r_xy, theta_c
+    INTEGER(I32)             :: n_theta_, nz_, block_size_, i, j, idx, Nobs
+
+    ! Defaults
+    r_ = 30.0_WP;          if (PRESENT(r))          r_ = r
+    n_theta_ = 72_I32;     if (PRESENT(n_theta))    n_theta_ = n_theta
+    nz_ = 20_I32;          if (PRESENT(nz))         nz_ = nz
+    block_size_ = 128_I32; if (PRESENT(block_size)) block_size_ = block_size
+
+    if (PRESENT(center)) then
+        center_ = center
+    else
+        center_ = [self % turbines(1) % BariPos(1), self % turbines(1) % BariPos(2), -self % turbines(1) % Depth / 2.0_WP]
+    end if
+
+    ! Basic enclosure check
+    max_dist = 0.0_WP
+    do i = 1, SIZE(self % turbines(1) % x, 1)
+        current_dist = NORM2(self % turbines(1) % x(i,:) - center_)
+        if (current_dist > max_dist) max_dist = current_dist
+    end do
+    max_dist = max_dist * 1.1_WP
+
+    if (r_ < max_dist) then
+        print*, "WindTurbine.run_sphere(): requested radius r=", r_, "m is smaller than max dist."
+        print*, "Radius increased to ", max_dist * 1.05_WP, "m"
+        r_ = max_dist * 1.05_WP
+    end if
+
+    Nobs = n_theta_ * nz_
+    ALLOCATE(observers_(Nobs, 3))
+
+    dz = (2.0_WP * r_) / REAL(nz_, WP)
+    dtheta = (2.0_WP * PI) / REAL(n_theta_, WP)
+
+    idx = 1
+    do i = 1, nz_
+        zc = (center_(3) - r_) + REAL(i - 1, WP) * dz + (dz / 2.0_WP)
+        r_xy = SQRT(MAX(0.0_WP, r_**2 - (zc - center_(3))**2))
+
+        do j = 1, n_theta_
+            theta_c = REAL(j - 1, WP) * dtheta + (dtheta / 2.0_WP)
+            observers_(idx, 1) = center_(1) + r_xy * COS(theta_c)
+            observers_(idx, 2) = center_(2) + r_xy * SIN(theta_c)
+            observers_(idx, 3) = zc
+            idx = idx + 1
+        end do
+    end do
+
+    CALL self % check_observers_distances(observers_, 0.1_WP)
+
+    write(*, '(A)') ''
+    write(*, '(A)') 'Computing spherical pressure field ...'
+    write(*, '(A, F0.2, A, F0.2, A, F0.2, A)') &
+        '  Centre: (', center_(1), ', ', center_(2), ', ', center_(3), ') m'
+    write(*, '(A, F0.2, A, I0, A, I0, A, I0, A)') &
+        '  Radius: ', r_, ' m | grid: ', n_theta_, ' azim x ', nz_, ' z (', Nobs, ' observers)'
+
+    CALL self % set_N_images(0_I32)
+    CALL self % compute_pressure(observers_, block_size_, p)
+    CALL self % restore_default_images()
+
+    if (self % debug) write(*, '(A, F0.2)') 'Sphere Pressure Norm: ', norm2(abs(p))
+
+END SUBROUTINE run_sphere
+
 
 END MODULE MethodImages

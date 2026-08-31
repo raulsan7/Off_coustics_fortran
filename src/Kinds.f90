@@ -1,7 +1,10 @@
 MODULE Kinds
 
 IMPLICIT NONE
-PUBLIC
+PRIVATE
+PUBLIC :: I32, I64, WP, PI, I1
+PUBLIC :: RHO_WATER, SPEED_OF_SOUND, P_REF
+PUBLIC :: IN_CLUSTER
 
 ! ----------------------------------------
 ! Integer precision kinds
