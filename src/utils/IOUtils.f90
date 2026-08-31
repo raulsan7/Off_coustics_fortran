@@ -1,12 +1,30 @@
 MODULE IOUtils
 
+USE HDF5
 USE KINDS, ONLY: I32, WP
 USE, INTRINSIC :: IEEE_ARITHMETIC, ONLY: IEEE_VALUE, IEEE_QUIET_NAN
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: get_SDsum_variables, read_input_SD, read_curve
+PUBLIC :: get_SDsum_variables, read_input_SD, read_curve, save_to_hdf5
+
+INTERFACE save_to_hdf5
+    MODULE PROCEDURE save_hdf5_real_scalar
+    MODULE PROCEDURE save_hdf5_int_scalar
+    MODULE PROCEDURE save_hdf5_cplx_scalar
+    MODULE PROCEDURE save_hdf5_logical_scalar
+    MODULE PROCEDURE save_hdf5_char_scalar
+    MODULE PROCEDURE save_hdf5_real_1d
+    MODULE PROCEDURE save_hdf5_int_1d
+    MODULE PROCEDURE save_hdf5_cplx_1d
+    MODULE PROCEDURE save_hdf5_real_2d
+    MODULE PROCEDURE save_hdf5_int_2d
+    MODULE PROCEDURE save_hdf5_cplx_2d
+    MODULE PROCEDURE save_hdf5_real_3d
+    MODULE PROCEDURE save_hdf5_int_3d
+    MODULE PROCEDURE save_hdf5_cplx_3d
+END INTERFACE
 
 CONTAINS
 
@@ -939,6 +957,544 @@ FUNCTION extract_number_nodes(text_line) RESULT(number_of_nodes)
     end if
 
 END FUNCTION extract_number_nodes
+
+
+! -------------------- !
+! HDF5 FUNCTIONS
+! -------------------- !
+
+! ---------- SCALARS ---------- !
+SUBROUTINE save_hdf5_real_scalar(filepath, var_name, data_scalar)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    REAL(WP), INTENT(IN), TARGET :: data_scalar
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(1) :: dims
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = 1
+    CALL h5screate_simple_f(1, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_DOUBLE, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_DOUBLE, data_scalar, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_real_scalar
+
+SUBROUTINE save_hdf5_int_scalar(filepath, var_name, data_scalar)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    INTEGER, INTENT(IN), TARGET  :: data_scalar
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(1) :: dims
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = 1
+    CALL h5screate_simple_f(1, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_INTEGER, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_INTEGER, data_scalar, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_int_scalar
+
+SUBROUTINE save_hdf5_cplx_scalar(filepath, var_name, data_scalar)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    COMPLEX(WP), INTENT(IN)      :: data_scalar
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(1) :: dims
+    REAL(WP), TARGET               :: tmp(2)
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    tmp(1) = REAL(data_scalar, WP)
+    tmp(2) = AIMAG(data_scalar)
+
+    dims(1) = 2
+    CALL h5screate_simple_f(1, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_DOUBLE, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_DOUBLE, tmp, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_cplx_scalar
+
+SUBROUTINE save_hdf5_logical_scalar(filepath, var_name, data_scalar)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    LOGICAL, INTENT(IN), TARGET :: data_scalar
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(1) :: dims
+    INTEGER                        :: int_val   ! Converted value
+
+    int_val = MERGE(1, 0, data_scalar)
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = 1
+    CALL h5screate_simple_f(1, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_INTEGER, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_INTEGER, int_val, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_logical_scalar
+
+SUBROUTINE save_hdf5_char_scalar(filepath, var_name, data_scalar)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    CHARACTER(len=*), INTENT(IN) :: data_scalar
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id, dtype_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(1) :: dims
+    INTEGER(SIZE_T)                :: str_len
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    ! Obtain trimed text length
+    str_len = INT(LEN_TRIM(data_scalar), KIND=SIZE_T)
+    IF (str_len == 0_SIZE_T) str_len = 1_SIZE_T
+
+    ! Create datatype with adecuate lenght
+    CALL h5tcopy_f(H5T_FORTRAN_S1, dtype_id, error)
+    CALL h5tset_size_f(dtype_id, str_len, error)
+
+    dims(1) = 1
+    CALL h5screate_simple_f(1, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, dtype_id, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, dtype_id, data_scalar, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5tclose_f(dtype_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_char_scalar
+
+! ---------- ARRAYS 1D ---------- !
+SUBROUTINE save_hdf5_real_1d(filepath, var_name, data_array)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    REAL(WP), INTENT(IN), TARGET :: data_array(:)
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(1) :: dims
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = SIZE(data_array, 1)
+    CALL h5screate_simple_f(1, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_DOUBLE, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_DOUBLE, data_array, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_real_1d
+
+SUBROUTINE save_hdf5_int_1d(filepath, var_name, data_array)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    INTEGER, INTENT(IN), TARGET  :: data_array(:)
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(1) :: dims
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = SIZE(data_array, 1)
+    CALL h5screate_simple_f(1, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_INTEGER, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_INTEGER, data_array, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_int_1d
+
+SUBROUTINE save_hdf5_cplx_1d(filepath, var_name, data_array)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    COMPLEX(WP), INTENT(IN)      :: data_array(:)
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(2) :: dims
+    REAL(WP), ALLOCATABLE, TARGET  :: tmp(:,:)
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = 2
+    dims(2) = SIZE(data_array, 1)
+    
+    ALLOCATE(tmp(2, dims(2)))
+    tmp(1,:) = REAL(data_array, WP)
+    tmp(2,:) = AIMAG(data_array)
+
+    CALL h5screate_simple_f(2, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_DOUBLE, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_DOUBLE, tmp, dims, error)
+
+    DEALLOCATE(tmp)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_cplx_1d
+
+! ---------- ARRAYS 2D ---------- !
+SUBROUTINE save_hdf5_real_2d(filepath, var_name, data_array)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    REAL(WP), INTENT(IN), TARGET :: data_array(:,:)
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(2) :: dims
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = SIZE(data_array, 1)
+    dims(2) = SIZE(data_array, 2)
+    CALL h5screate_simple_f(2, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_DOUBLE, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_DOUBLE, data_array, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_real_2d
+
+SUBROUTINE save_hdf5_int_2d(filepath, var_name, data_array)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    INTEGER, INTENT(IN), TARGET  :: data_array(:,:)
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(2) :: dims
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = SIZE(data_array, 1)
+    dims(2) = SIZE(data_array, 2)
+    CALL h5screate_simple_f(2, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_INTEGER, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_INTEGER, data_array, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_int_2d
+
+SUBROUTINE save_hdf5_cplx_2d(filepath, var_name, data_array)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    COMPLEX(WP), INTENT(IN)      :: data_array(:,:)
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(3) :: dims
+    REAL(WP), ALLOCATABLE, TARGET  :: tmp(:,:,:)
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = 2
+    dims(2) = SIZE(data_array, 1)
+    dims(3) = SIZE(data_array, 2)
+
+    ALLOCATE(tmp(2, dims(2), dims(3)))
+    tmp(1,:,:) = REAL(data_array, WP)
+    tmp(2,:,:) = AIMAG(data_array)
+
+    CALL h5screate_simple_f(3, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_DOUBLE, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_DOUBLE, tmp, dims, error)
+
+    DEALLOCATE(tmp)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_cplx_2d
+
+! ---------- ARRAYS 3D ---------- !
+SUBROUTINE save_hdf5_real_3d(filepath, var_name, data_array)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    REAL(WP), INTENT(IN), TARGET :: data_array(:,:,:)
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(3) :: dims
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = SIZE(data_array, 1)
+    dims(2) = SIZE(data_array, 2)
+    dims(3) = SIZE(data_array, 3)
+    CALL h5screate_simple_f(3, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_DOUBLE, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_DOUBLE, data_array, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_real_3d
+
+SUBROUTINE save_hdf5_int_3d(filepath, var_name, data_array)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    INTEGER, INTENT(IN), TARGET  :: data_array(:,:,:)
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(3) :: dims
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = SIZE(data_array, 1)
+    dims(2) = SIZE(data_array, 2)
+    dims(3) = SIZE(data_array, 3)
+    CALL h5screate_simple_f(3, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_INTEGER, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_INTEGER, data_array, dims, error)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_int_3d
+
+SUBROUTINE save_hdf5_cplx_3d(filepath, var_name, data_array)
+    CHARACTER(len=*), INTENT(IN) :: filepath
+    CHARACTER(len=*), INTENT(IN) :: var_name
+    COMPLEX(WP), INTENT(IN)      :: data_array(:,:,:)
+
+    INTEGER(HID_T)                 :: file_id, dspace_id, dset_id
+    INTEGER                        :: error
+    LOGICAL                        :: file_exists, link_exists
+    INTEGER(HSIZE_T), DIMENSION(4) :: dims
+    REAL(WP), ALLOCATABLE, TARGET  :: tmp(:,:,:,:)
+
+    CALL h5open_f(error)
+
+    INQUIRE(FILE=filepath, EXIST=file_exists)
+    IF (file_exists) THEN
+        CALL h5fopen_f(filepath, H5F_ACC_RDWR_F, file_id, error)
+    ELSE
+        CALL h5fcreate_f(filepath, H5F_ACC_TRUNC_F, file_id, error)
+    END IF
+
+    CALL h5lexists_f(file_id, var_name, link_exists, error)
+    IF (link_exists) CALL h5ldelete_f(file_id, var_name, error)
+
+    dims(1) = 2
+    dims(2) = SIZE(data_array, 1)
+    dims(3) = SIZE(data_array, 2)
+    dims(4) = SIZE(data_array, 3)
+
+    ALLOCATE(tmp(2, dims(2), dims(3), dims(4)))
+    tmp(1,:,:,:) = REAL(data_array, WP)
+    tmp(2,:,:,:) = AIMAG(data_array)
+
+    CALL h5screate_simple_f(4, dims, dspace_id, error)
+
+    CALL h5dcreate_f(file_id, var_name, H5T_NATIVE_DOUBLE, dspace_id, dset_id, error)
+    CALL h5dwrite_f(dset_id, H5T_NATIVE_DOUBLE, tmp, dims, error)
+
+    DEALLOCATE(tmp)
+
+    CALL h5dclose_f(dset_id, error)
+    CALL h5sclose_f(dspace_id, error)
+    CALL h5fclose_f(file_id, error)
+    CALL h5close_f(error)
+END SUBROUTINE save_hdf5_cplx_3d
 
 
 END MODULE IOUtils

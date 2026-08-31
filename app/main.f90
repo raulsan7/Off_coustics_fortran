@@ -35,12 +35,11 @@ CALL monopile % init( &
         WindDir   = 0.0_WP, &
         Depth     = 30.0_WP, &
         Nmembers  = 8, &
-        Nnodes    = 5, &
-        debug    = .true. )
+        Nnodes    = 5)
 
 CALL monopile % read_input(verbose=.true.)
 CALL monopile % compute_force(filter_freqs=.true., verbose=.true.)
-CALL acoustic_model % init(monopile, debug = .true.)
+CALL acoustic_model % init(monopile, debug = .true., name="plot_mn_SD30")
 
 CALL acoustic_model % run_all()
 

@@ -127,12 +127,12 @@ SUBROUTINE init(self, debug, rootname, output_dir, save_dir, save_name, &
 
 
     ! Self assignment: scalar
-    if (PRESENT(debug))     self%debug     = debug
-    if (PRESENT(WindSpeed)) self%WindSpeed = WindSpeed
-    if (PRESENT(WindDir))   self%WindDir   = WindDir
-    if (PRESENT(Depth))     self%Depth     = Depth
-    if (PRESENT(Nmembers))  self%Nmembers  = Nmembers
-    if (PRESENT(Nnodes))    self%Nnodes    = Nnodes
+    if (PRESENT(debug))     self % debug     = debug
+    if (PRESENT(WindSpeed)) self % WindSpeed = WindSpeed
+    if (PRESENT(WindDir))   self % WindDir   = WindDir
+    if (PRESENT(Depth))     self % Depth     = Depth
+    if (PRESENT(Nmembers))  self % Nmembers  = Nmembers
+    if (PRESENT(Nnodes))    self % Nnodes    = Nnodes
 
     ! Self assignement: array
     if (PRESENT(AxisPos)) then

@@ -1,6 +1,7 @@
 MODULE MethodImages
 
 USE omp_lib
+USE IOUtils, ONLY: save_to_hdf5
 USE Kinds, ONLY: WP, I32, PI, I1
 USE WindTurbine, ONLY: WindTurbine_t
 USE AcousticSolver, ONLY: AcousticSolver_t
@@ -53,6 +54,8 @@ TYPE, EXTENDS(AcousticSolver_t) :: MethodImages_t
     PROCEDURE :: get_name           => get_name_MethodImages
     PROCEDURE :: compute_pressure   => compute_pressure_MethodImages
     PROCEDURE :: save_parameters    => save_parameters_MethodImages
+    PROCEDURE :: save_acoustics     => save_acoustics_MethodImages
+
 
 END TYPE MethodImages_t
 
@@ -62,7 +65,8 @@ CONTAINS
 ! ---------- DEFERRED ---------- !
 SUBROUTINE init_MethodImages(self, turbines, N_images, c_wat, rho_wat, &
                              Upper_BC, Lower_BC, Upper_HBC, Lower_HBC, &
-                             attenuation_upper, attenuation_lower, eps, p_ref, cluster, debug)
+                             attenuation_upper, attenuation_lower, eps, &
+                             p_ref, cluster, debug, name)
 
     CLASS(MethodImages_t), INTENT(INOUT)        :: self
     CLASS(WindTurbine_t) , INTENT(IN), OPTIONAL :: turbines(:)
@@ -73,7 +77,10 @@ SUBROUTINE init_MethodImages(self, turbines, N_images, c_wat, rho_wat, &
     REAL(WP)    , INTENT(IN), OPTIONAL          :: attenuation_upper, attenuation_lower
     REAL(WP)    , INTENT(IN), OPTIONAL          :: eps, p_ref
     LOGICAL     , INTENT(IN), OPTIONAL          :: cluster, debug
+    CHARACTER(len=*), INTENT(IN)                :: name
 
+    ! Local variables
+    CHARACTER(len=512) :: name_
 
     ! Defaults
     if (PRESENT(N_images))          self % N_images  = N_images
@@ -88,9 +95,10 @@ SUBROUTINE init_MethodImages(self, turbines, N_images, c_wat, rho_wat, &
     if (PRESENT(eps))               self % eps       = eps
     if (PRESENT(p_ref))             self % p_ref     = p_ref
     if (PRESENT(cluster))           self % cluster   = cluster
-    if (PRESENT(debug))             self % debug      = debug
-
+    if (PRESENT(debug))             self % debug     = debug
     
+    ! Build save_path
+    self % save_path = trim(self % turbines(1) % save_path) // trim(name) // ".hdf5"
     self % default_N_images = self % N_images
     
     if (self % Upper_HBC <= self % Lower_HBC) error stop "MethodImages % init: Upper_HBC must be strictly greater than Lower_HBC"
@@ -100,24 +108,29 @@ SUBROUTINE init_MethodImages(self, turbines, N_images, c_wat, rho_wat, &
         ALLOCATE(self % turbines, source = turbines)
     end if
     
+    print*, ''
+    print*, 'Selected method: ', self % get_name()
     CALL self % build_all_image_system()
+    CALL self % save_parameters()
 
 END SUBROUTINE init_MethodImages
 
 
 SUBROUTINE init_MethodImages_single(self, turbine, N_images, c_wat, rho_wat, &
                                     Upper_BC, Lower_BC, Upper_HBC, Lower_HBC, &
-                                    attenuation_upper, attenuation_lower, eps, p_ref, cluster, debug)
+                                    attenuation_upper, attenuation_lower, eps, p_ref, &
+                                    cluster, debug, name)
 
-    CLASS(MethodImages_t), INTENT(INOUT) :: self
-    CLASS(WindTurbine_t) , INTENT(IN)    :: turbine
-    INTEGER(I32), INTENT(IN), OPTIONAL   :: N_images
-    REAL(WP)    , INTENT(IN), OPTIONAL   :: c_wat, rho_wat
-    REAL(WP)    , INTENT(IN), OPTIONAL   :: Upper_HBC, Lower_HBC
-    INTEGER(I32), INTENT(IN), OPTIONAL   :: Upper_BC, Lower_BC
-    REAL(WP)    , INTENT(IN), OPTIONAL   :: attenuation_upper, attenuation_lower
-    REAL(WP)    , INTENT(IN), OPTIONAL   :: eps, p_ref
-    LOGICAL     , INTENT(IN), OPTIONAL   :: cluster, debug
+    CLASS(MethodImages_t), INTENT(INOUT)   :: self
+    CLASS(WindTurbine_t) , INTENT(IN)      :: turbine
+    INTEGER(I32)    , INTENT(IN), OPTIONAL :: N_images
+    REAL(WP)        , INTENT(IN), OPTIONAL :: c_wat, rho_wat
+    REAL(WP)        , INTENT(IN), OPTIONAL :: Upper_HBC, Lower_HBC
+    INTEGER(I32)    , INTENT(IN), OPTIONAL :: Upper_BC, Lower_BC
+    REAL(WP)        , INTENT(IN), OPTIONAL :: attenuation_upper, attenuation_lower
+    REAL(WP)        , INTENT(IN), OPTIONAL :: eps, p_ref
+    LOGICAL         , INTENT(IN), OPTIONAL :: cluster, debug
+    CHARACTER(len=*), INTENT(IN)           :: name
 
 
     if (allocated(self%turbines)) deallocate(self%turbines)
@@ -127,7 +140,7 @@ SUBROUTINE init_MethodImages_single(self, turbine, N_images, c_wat, rho_wat, &
     call init_MethodImages(self, N_images=N_images, c_wat=c_wat, rho_wat=rho_wat, &
                            Upper_BC=Upper_BC, Lower_BC=Lower_BC, Upper_HBC=Upper_HBC, Lower_HBC=Lower_HBC, &
                            attenuation_upper=attenuation_upper, attenuation_lower=attenuation_lower, &
-                           eps=eps, p_ref=p_ref, cluster=cluster, debug=debug)
+                           eps=eps, p_ref=p_ref, cluster=cluster, debug=debug, name=name)
 
 END SUBROUTINE init_MethodImages_single
 
@@ -246,24 +259,95 @@ SUBROUTINE compute_pressure_MethodImages(self, observers, block_size, total_pres
 END SUBROUTINE compute_pressure_MethodImages
 
 
-SUBROUTINE save_parameters_MethodImages(self, unit_num)
-        CLASS(MethodImages_t) , INTENT(INOUT) :: self
-        INTEGER(I32), INTENT(IN)              :: unit_num
+SUBROUTINE save_parameters_MethodImages(self)
+    CLASS(MethodImages_t), INTENT(IN) :: self
 
-        write(unit_num, *) "N_images:", self % N_images
-        write(unit_num, *) "c_wat:",    self % c
-        write(unit_num, *) "rho_wat:",  self % rho
-        write(unit_num, *) "Upper_BC:", self % Upper_BC
-        write(unit_num, *) "Lower_BC:", self % Lower_BC
-        write(unit_num, *) "Upper_HBC:", self % Upper_HBC
-        write(unit_num, *) "Lower_HBC:", self % Lower_HBC
-        write(unit_num, *) "up_R:", self % up_R
-        write(unit_num, *) "lw_R:", self % lw_R
-        write(unit_num, *) "eps:", self % eps
-        write(unit_num, *) "p_ref:", self % p_ref
-        write(unit_num, *) "cluster:", self % cluster
+    ! Local variables
+    CHARACTER(len=512) :: save_path
+    INTEGER(I32)       :: Nturb, i
+    CHARACTER(len=2)   :: ichar
+
+    Nturb    = size(self % turbines)
+    save_path = trim(self % save_path)
+    ! Solver
+    CALL save_to_hdf5(save_path, "N_images" , self % N_images)
+    CALL save_to_hdf5(save_path, "c_wat"    , self % N_images)
+    CALL save_to_hdf5(save_path, "rho_wat"  , self % N_images)
+    CALL save_to_hdf5(save_path, "Upper_HBC", self % N_images)
+    CALL save_to_hdf5(save_path, "Lower_HBC", self % N_images)
+    CALL save_to_hdf5(save_path, "p_ref"    , self % N_images)
+    CALL save_to_hdf5(save_path, "Nturb"    , Nturb)
+    
+    ! Turbines
+    if (Nturb > 1) then
+        do i = 1, Nturb
+            WRITE(ichar, '(I2.2)') i
+            CALL save_to_hdf5(save_path, "WindSpeed_"       // ichar, self % turbines(i) % WindSpeed)
+            CALL save_to_hdf5(save_path, "WindDir_"         // ichar, self % turbines(i) % WindDir)
+            CALL save_to_hdf5(save_path, "Depth_"           // ichar, self % turbines(i) % Depth)
+            CALL save_to_hdf5(save_path, "Structure_nodes_" // ichar, self % turbines(i) % x_all)
+            CALL save_to_hdf5(save_path, "Case_type_"       // ichar, self % turbines(i) % case_type)
+            CALL save_to_hdf5(save_path, "In_farm_"         // ichar, self % turbines(i) % in_farm)
+            CALL save_to_hdf5(save_path, "AxisPos_"         // ichar, self % turbines(i) % AxisPos)
+            CALL save_to_hdf5(save_path, "BariPos_"         // ichar, self % turbines(i) % BariPos)
+        end do
+    elseif (Nturb == 1) then
+        CALL save_to_hdf5(save_path, "WindSpeed"       , self % turbines(1) % WindSpeed)
+        CALL save_to_hdf5(save_path, "WindDir"         , self % turbines(1) % WindDir)
+        CALL save_to_hdf5(save_path, "Depth"           , self % turbines(1) % Depth)
+        CALL save_to_hdf5(save_path, "Structure_nodes" , self % turbines(1) % x_all)
+        CALL save_to_hdf5(save_path, "Case_type"       , self % turbines(1) % case_type)
+        CALL save_to_hdf5(save_path, "In_farm"         , self % turbines(1) % in_farm)
+        CALL save_to_hdf5(save_path, "AxisPos"         , self % turbines(1) % AxisPos)
+        CALL save_to_hdf5(save_path, "BariPos"         , self % turbines(1) % BariPos)
+    end if
+
 
 END SUBROUTINE save_parameters_MethodImages
+
+
+SUBROUTINE save_acoustics_MethodImages(Self, var_name, var)
+    CLASS(MethodImages_t), INTENT(IN) :: self
+    CHARACTER(len=*)     , INTENT(IN) :: var_name
+    CLASS(*)             , INTENT(IN) :: var(..)
+
+    ! Local variables
+    CHARACTER(len=512) :: save_path
+
+    save_path = trim(self % save_path)
+
+    ! Evaluate dimensions
+    SELECT RANK (v_rank => var)
+    RANK(0) ! Scalars
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP))   ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER)    ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (LOGICAL)    ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+
+    RANK(1) ! Arrays 1D
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP))   ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER)    ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+
+    RANK(2) ! Arrays 2D
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP))   ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER)    ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+
+    RANK(3) ! Arrays 3D
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP))   ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER)    ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+    END SELECT
+END SUBROUTINE save_acoustics_MethodImages
 
 
 ! ---------- HELPERS ---------- !
@@ -527,9 +611,15 @@ SUBROUTINE run_sphere(self, r, n_theta, nz, center, block_size)
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
+    COMPLEX(WP), ALLOCATABLE :: p_reshaped(:,:,:)   ! (Nfreqs, n_theta, nz)
     REAL(WP)   , ALLOCATABLE :: observers_(:,:)
+    REAL(WP)   , ALLOCATABLE :: obs_reshaped(:,:,:) ! (n_theta, nz, 3)
+    REAL(WP)   , ALLOCATABLE :: theta_deg_arr(:)    ! Azimuth angles in degrees
+    REAL(WP)   , ALLOCATABLE :: z_centers(:)        ! Vertical coordinates of layers
+    REAL(WP)   , ALLOCATABLE :: z_edges(:), theta_edges(:)
     REAL(WP)                 :: r_, center_(3), max_dist, current_dist
     REAL(WP)                 :: dz, dtheta, zc, r_xy, theta_c
+    REAL(WP)                 :: dA
     INTEGER(I32)             :: n_theta_, nz_, block_size_, i, j, idx, Nobs
 
     ! Defaults
@@ -560,17 +650,35 @@ SUBROUTINE run_sphere(self, r, n_theta, nz, center, block_size)
 
     Nobs = n_theta_ * nz_
     ALLOCATE(observers_(Nobs, 3))
+    ALLOCATE(theta_deg_arr(n_theta_))
+    ALLOCATE(z_centers(nz_), z_edges(nz_+1), theta_edges(n_theta_+1))
 
+    ! Compute edges and centers for vertical and azimuthal discretization
+    ! Vertical layers: centers between edges
     dz = (2.0_WP * r_) / REAL(nz_, WP)
-    dtheta = (2.0_WP * PI) / REAL(n_theta_, WP)
+    do i = 1, nz_ + 1
+        z_edges(i) = (center_(3) - r_) + REAL(i - 1, WP) * dz
+    end do
+    do i = 1, nz_
+        z_centers(i) = 0.5_WP * (z_edges(i) + z_edges(i+1))
+    end do
 
+    ! Azimuthal: centers between edges
+    dtheta = (2.0_WP * PI) / REAL(n_theta_, WP)
+    do j = 1, n_theta_ + 1
+        theta_edges(j) = REAL(j - 1, WP) * dtheta
+    end do
+    do j = 1, n_theta_
+        theta_deg_arr(j) = 0.5_WP * (theta_edges(j) + theta_edges(j+1)) * 180.0_WP / PI
+    end do
+
+    ! Build observers array
     idx = 1
     do i = 1, nz_
-        zc = (center_(3) - r_) + REAL(i - 1, WP) * dz + (dz / 2.0_WP)
+        zc = z_centers(i)
         r_xy = SQRT(MAX(0.0_WP, r_**2 - (zc - center_(3))**2))
-
         do j = 1, n_theta_
-            theta_c = REAL(j - 1, WP) * dtheta + (dtheta / 2.0_WP)
+            theta_c = 0.5_WP * (theta_edges(j) + theta_edges(j+1))
             observers_(idx, 1) = center_(1) + r_xy * COS(theta_c)
             observers_(idx, 2) = center_(2) + r_xy * SIN(theta_c)
             observers_(idx, 3) = zc
@@ -592,6 +700,35 @@ SUBROUTINE run_sphere(self, r, n_theta, nz, center, block_size)
     CALL self % restore_default_images()
 
     if (self % debug) write(*, '(A, F0.2)') 'Sphere Pressure Norm: ', norm2(abs(p))
+
+    ! Reshape pressure and observers to 3D (n_theta, nz, 3) and (Nfreqs, n_theta, nz)
+    ALLOCATE(p_reshaped(SIZE(p,1), n_theta_, nz_))
+    ALLOCATE(obs_reshaped(n_theta_, nz_, 3))
+
+    idx = 1
+    do i = 1, nz_
+        do j = 1, n_theta_
+            obs_reshaped(j, i, :) = observers_(idx, :)
+            p_reshaped(:, j, i)   = p(:, idx)
+            idx = idx + 1
+        end do
+    end do
+
+    ! Compute surface element (approximate)
+    dA = (4.0_WP * PI * r_**2) / REAL(n_theta_ * nz_, WP)
+
+    ! Save results
+    CALL self % save_acoustics("Freqs", self % turbines(1) % Freqs)
+    CALL self % save_acoustics("P_sphere", p_reshaped)
+    CALL self % save_acoustics("Obs_sphere", obs_reshaped)
+    CALL self % save_acoustics("Theta_sphere", theta_deg_arr)
+    CALL self % save_acoustics("Z_sphere", z_centers)
+    CALL self % save_acoustics("R_sphere", r_)
+    CALL self % save_acoustics("Center_sphere", center_)
+    CALL self % save_acoustics("dA_sphere", dA)
+
+    print*, ''
+    print*, '   ---> Sphere data saved at ', self % save_path
 
 END SUBROUTINE run_sphere
 
