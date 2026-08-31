@@ -5,6 +5,7 @@ USE omp_lib
 USE Kinds, ONLY: I32, WP, PI
 
 IMPLICIT NONE
+
 PRIVATE
 PUBLIC :: WindTurbine_t, init
 

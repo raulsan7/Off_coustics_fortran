@@ -1,7 +1,7 @@
 MODULE MethodImages
 
 USE omp_lib
-USE Kinds, ONLY: WP, I32, PI
+USE Kinds, ONLY: WP, I32, PI, I1
 USE WindTurbine, ONLY: WindTurbine_t
 USE AcousticSolver, ONLY: AcousticSolver_t
 
@@ -447,7 +447,6 @@ END SUBROUTINE method_of_images
 
 
 SUBROUTINE dipole_pressure_images(self, obs_pos, freqs, nodes_pos, force, BC_all, p_out)
-    USE Kinds, ONLY: I1, PI
     CLASS(MethodImages_t), INTENT(IN)       :: self
     REAL(WP), INTENT(IN)                    :: obs_pos(:,:)     ! (Nob, 3)  ; caller must pass a 2D slice (Nob,3)
     REAL(WP), INTENT(IN)                    :: freqs(:)         ! (Nfreqs)

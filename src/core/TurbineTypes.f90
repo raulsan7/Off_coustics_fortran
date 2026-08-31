@@ -1,12 +1,12 @@
 MODULE TurbineTypes
 
 USE omp_lib
-USE WindTurbine
 USE Kinds, ONLY: WP, I32, PI
+USE WindTurbine, ONLY: WindTurbine_t, init
 
 IMPLICIT NONE 
-PRIVATE
 
+PRIVATE
 PUBLIC:: DTU10MWMonopile
 
 ! ------------------------
@@ -44,7 +44,7 @@ CONTAINS
 SUBROUTINE init_DTU10MWMonopile(self, debug, rootname, output_dir, save_dir, save_name, &
                          WindSpeed, WindDir, Depth, AxisPos, BariPos, Binary, &
                          Nmembers, Nnodes)
-    CLASS(DTU10MWMonopile), INTENT(INOUT) :: self
+    CLASS(DTU10MWMonopile), INTENT(INOUT)        :: self
     LOGICAL               , INTENT(IN), OPTIONAL :: debug
     CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: rootname
     CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: output_dir

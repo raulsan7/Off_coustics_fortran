@@ -1,18 +1,17 @@
 MODULE IOUtils
 
 USE KINDS, ONLY: I32, WP
+USE, INTRINSIC :: IEEE_ARITHMETIC, ONLY: IEEE_VALUE, IEEE_QUIET_NAN
 
 IMPLICIT NONE
-PRIVATE
 
+PRIVATE
 PUBLIC :: get_SDsum_variables, read_input_SD, read_curve
 
 CONTAINS
 
 
 SUBROUTINE get_SDsum_variables(SD_path, Nmembers, Nnodes, verbose, Nodes)
-    USE, INTRINSIC :: IEEE_ARITHMETIC, ONLY: IEEE_VALUE, IEEE_QUIET_NAN
-
     CHARACTER(len=*), INTENT(IN)           :: SD_path       ! [-] Path to OpenFAST SubDyn sum file
     INTEGER(I32)    , INTENT(IN), OPTIONAL :: Nmembers      ! [-] Number of OpenFAST members
     INTEGER(I32)    , INTENT(IN), OPTIONAL :: Nnodes        ! [-] Number of OpenFAST nodes
