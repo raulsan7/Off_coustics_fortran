@@ -12,9 +12,15 @@
       "problemMatcher": []
     },
     {
-      "label": "FPM Run (Ejecutar)",
+      "label": "FPM Run (Ejecutar normal)",
       "type": "shell",
       "command": "fpm run",
+      "problemMatcher": []
+    },
+    {
+      "label": "FPM Run (Optimizado + OpenMP)",
+      "type": "shell",
+      "command": "fpm run --flag \"-O3 -fopenmp\"",
       "problemMatcher": []
     },
     {

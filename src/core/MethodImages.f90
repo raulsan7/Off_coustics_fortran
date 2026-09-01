@@ -211,14 +211,6 @@ SUBROUTINE compute_pressure_MethodImages(self, observers, block_size, total_pres
                 iend   = min(istart + bs - 1, nobs)
                 nb     = iend - istart + 1
 
-                ! In OpenMP builds, avoid printing per-block progress from multiple threads
-                ! because the output is interleaved and looks chaotic. Keep it only in serial mode.
-                ! if (omp_get_max_threads() <= 1) then
-                !     print '(A,I0,A,I0,A,I0,A,I0,A)', '  Progress: Block ', ichunk+1, '/', n_chunks, &
-                !                                     ' (', iend, '/', nobs, ' observers)'
-                !     flush(6)
-                ! end if
-
                 ! Call kernel for this chunk (p_block will be allocated by the routine)
                 call self % dipole_pressure_images(observers(istart:iend, :), freqs, img % nodes_pos, &
                                                    img % force, img % BC_all, p_block)
