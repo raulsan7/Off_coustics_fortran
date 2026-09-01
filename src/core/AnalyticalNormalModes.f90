@@ -205,7 +205,7 @@ SUBROUTINE compute_pressure_AnalyticalNormalModes(self, observers, block_size, t
             ! Serial: loop observers (keep 2D slice for compatibility)
             do i = 1, nobs
                 call self % dipolar_pressure_NM(observers(i:i, :), freqs, &
-                                                self % turbines(nt) % x, F_corr, p_block)
+                                                self % turbines(nt) % x, self % turbines(nt) % F, p_block)
                 total_pressure(:, i) = total_pressure(:, i) + p_block(:, 1)
 
                 if (ALLOCATED(p_block)) DEALLOCATE(p_block)
@@ -417,7 +417,7 @@ SUBROUTINE dipolar_pressure_NM(self, obs_pos, freqs, nodes_pos, force, p_out)
         do k = 1, Nob
             dx(k, j) = obs_pos(k, 1) - nodes_pos(j, 1)
             dy(k, j) = obs_pos(k, 2) - nodes_pos(j, 2)
-            r(k, j)  = sqrt(dx(k, j)**2 + dy(k, j)**2 + (z_obs(k) - zs(j))**2)
+            r(k, j)  = sqrt(dx(k, j)**2 + dy(k, j)**2)
         end do
     end do
 
