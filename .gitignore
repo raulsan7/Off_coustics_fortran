@@ -2,17 +2,18 @@
 # .gitignore para proyecto Fortran
 # Estrategia: ignorar TODO por defecto, permitir solo .f90
 # =========================================================
-
 # 1. Ignora todo en la raíz y subcarpetas
-*
+# *
+/build
+/turbine_acoustic_data
 
 # 2. Permite explorar dentro de las carpetas (necesario para que
 #    Git entre en subdirectorios y aplique las reglas siguientes)
-!*/
+# !*/
 
-# 3. Permite los archivos fuente Fortran
-!*.f90
+# # 3. Permite los archivos fuente Fortran
+# !*.f90
 
-# 4. (Opcional) Si quieres conservar el propio .gitignore y un README
-!.gitignore
-!README.md
+# # 4. (Opcional) Si quieres conservar el propio .gitignore y un README
+# !.gitignore
+# !README.md

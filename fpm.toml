@@ -1,0 +1,12 @@
+name = "Off_coustics_fortran"
+version = "0.1.0"
+author = "Raul Sanz Ramirez <raul.sanz.ramirez@upm.es>"
+description = "Underwater vibroacoustic code"
+
+[dependencies]
+# Enlaza la librería HDF5 usando el metapaquete nativo de fpm (requiere fpm v0.12.0 o superior)
+hdf5 = "*"
+
+[build]
+# Le indicamos manualmente que enlace la librería de FFTW3
+link = ["fftw3"]

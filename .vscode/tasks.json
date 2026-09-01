@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "FPM Build (Compilar)",
+      "type": "shell",
+      "command": "fpm build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "FPM Run (Ejecutar)",
+      "type": "shell",
+      "command": "fpm run",
+      "problemMatcher": []
+    },
+    {
+      "label": "FPM Test (Probar)",
+      "type": "shell",
+      "command": "fpm test",
+      "problemMatcher": []
+    }
+  ]
+}
