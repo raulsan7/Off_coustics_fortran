@@ -5,9 +5,10 @@
 PROGRAM MAIN
 
 USE Kinds, ONLY: I32, WP
-USE TurbineTypes, ONLY: DTU10MWMonopile
-USE MethodImages, ONLY: MethodImages_t
 USE MathUtils, ONLY: format_elapsed
+USE MethodImages, ONLY: MethodImages_t
+USE TurbineTypes, ONLY: DTU10MWMonopile
+USE AnalyticalNormalModes, ONLY: AnalyticalNormalModes_t
 
 IMPLICIT NONE
 
@@ -18,6 +19,7 @@ INTEGER(I32)    , PARAMETER :: Nm = 8, Nn = 5, unit_num = 10
 
 TYPE(DTU10MWMonopile) :: monopile
 TYPE(MethodImages_t)  :: acoustic_model
+TYPE(AnalyticalNormalModes_t) :: analytical_model
 
 REAL(WP) :: start_time, elapsed_display
 CHARACTER(len=8) :: tag
@@ -39,10 +41,10 @@ CALL monopile % init( &
 
 CALL monopile % read_input(verbose=.true.)
 CALL monopile % compute_force(filter_freqs=.true., verbose=.true.)
+
 CALL acoustic_model % init(monopile, debug = .true., name="plot_mn_SD30")
-
 CALL acoustic_model % run_all()
-
+! CALL analytical_model % init(monopile, verbose=.true., name="plot_mn_ANM")
 
 ! ---------- DISPLAY ELPASED TIME ---------- !
 CALL format_elapsed(start_time, elapsed_display, tag)

@@ -1,12 +1,13 @@
 MODULE AcousticSolver
 
 USE Kinds, ONLY: WP, I32, PI, SPEED_OF_SOUND, RHO_WATER, PREF => P_REF, IN_CLUSTER
+USE IOUtils, ONLY: save_to_hdf5
 USE WindTurbine, ONLY: WindTurbine_t
 
 IMPLICIT NONE
 
 PRIVATE
-PUBLIC :: AcousticSolver_t
+PUBLIC :: AcousticSolver_t, save_turbine_params
 
 
 ! ------------------
@@ -29,7 +30,8 @@ TYPE, ABSTRACT :: AcousticSolver_t
     CONTAINS
 
     ! --- Public type-bound procedures --- !
-    ! PROCEDURE :: save_acoustics                 ! Saves acoustic variables to save_path
+    PROCEDURE :: save_turbine_params            ! Saves turbine parameters to save_path
+    PROCEDURE :: save_acoustics
     PROCEDURE :: check_observers_distances      ! Helper for run subroutines
     PROCEDURE :: run_spectrums                  ! Subroutines to compute acoustic pressure
     PROCEDURE :: run_polar
@@ -45,7 +47,6 @@ TYPE, ABSTRACT :: AcousticSolver_t
     PROCEDURE(get_name_i)        , DEFERRED :: get_name
     PROCEDURE(compute_pressure_i), DEFERRED :: compute_pressure
     PROCEDURE(save_parameters_i) , DEFERRED :: save_parameters
-    PROCEDURE(save_acoustics_i)  , DEFERRED :: save_acoustics
 
 END TYPE AcousticSolver_t
 
@@ -81,20 +82,89 @@ ABSTRACT INTERFACE
     END SUBROUTINE
 END INTERFACE
 
-! Save acoustics
-ABSTRACT INTERFACE
-    SUBROUTINE save_acoustics_i(self, var_name, var)
-        IMPORT:: AcousticSolver_t
-        CLASS(AcousticSolver_t), INTENT(IN) :: self
-        CHARACTER(len=*)       , INTENT(IN) :: var_name
-        CLASS(*)               , INTENT(IN) :: var(..) ! (..) indica cualquier dimensión (0D a 15D)
-    END SUBROUTINE save_acoustics_i
-END INTERFACE
-
 
 CONTAINS
 
 ! ---------- HELPERS ---------- !
+SUBROUTINE save_turbine_params(self)
+    CLASS(AcousticSolver_t), INTENT(IN) :: self
+
+    ! Local variables
+    CHARACTER(len=512) :: save_path
+    INTEGER(I32)       :: Nturb, i
+    CHARACTER(len=2)   :: ichar
+
+    save_path = trim(self % save_path)
+    Nturb     = size(self % turbines)
+
+    ! Turbines
+    if (Nturb > 1) then
+        do i = 1, Nturb
+            WRITE(ichar, '(I2.2)') i
+            CALL save_to_hdf5(save_path, "WindSpeed_"       // ichar, self % turbines(i) % WindSpeed)
+            CALL save_to_hdf5(save_path, "WindDir_"         // ichar, self % turbines(i) % WindDir)
+            CALL save_to_hdf5(save_path, "Depth_"           // ichar, self % turbines(i) % Depth)
+            CALL save_to_hdf5(save_path, "Structure_nodes_" // ichar, self % turbines(i) % x_all)
+            CALL save_to_hdf5(save_path, "Case_type_"       // ichar, self % turbines(i) % case_type)
+            CALL save_to_hdf5(save_path, "In_farm_"         // ichar, self % turbines(i) % in_farm)
+            CALL save_to_hdf5(save_path, "AxisPos_"         // ichar, self % turbines(i) % AxisPos)
+            CALL save_to_hdf5(save_path, "BariPos_"         // ichar, self % turbines(i) % BariPos)
+        end do
+    elseif (Nturb == 1) then
+        CALL save_to_hdf5(save_path, "WindSpeed"       , self % turbines(1) % WindSpeed)
+        CALL save_to_hdf5(save_path, "WindDir"         , self % turbines(1) % WindDir)
+        CALL save_to_hdf5(save_path, "Depth"           , self % turbines(1) % Depth)
+        CALL save_to_hdf5(save_path, "Structure_nodes" , self % turbines(1) % x_all)
+        CALL save_to_hdf5(save_path, "Case_type"       , self % turbines(1) % case_type)
+        CALL save_to_hdf5(save_path, "In_farm"         , self % turbines(1) % in_farm)
+        CALL save_to_hdf5(save_path, "AxisPos"         , self % turbines(1) % AxisPos)
+        CALL save_to_hdf5(save_path, "BariPos"         , self % turbines(1) % BariPos)
+    end if
+
+END SUBROUTINE save_turbine_params
+
+
+SUBROUTINE save_acoustics(Self, var_name, var)
+    CLASS(AcousticSolver_t), INTENT(IN) :: self
+    CHARACTER(len=*)       , INTENT(IN) :: var_name
+    CLASS(*)               , INTENT(IN) :: var(..)
+
+    ! Local variables
+    CHARACTER(len=512) :: save_path
+
+    save_path = trim(self % save_path)
+    
+    SELECT RANK (v_rank => var)
+    RANK(0) 
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (LOGICAL) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+    RANK(1) 
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+    RANK(2) 
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+    RANK(3) 
+        SELECT TYPE (v => v_rank)
+        TYPE IS (REAL(WP)) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (INTEGER) ; CALL save_to_hdf5(save_path, trim(var_name), v)
+        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
+        END SELECT
+    END SELECT
+
+END SUBROUTINE save_acoustics
+
+
 SUBROUTINE check_observers_distances(self, observers, min_distance)
     CLASS(AcousticSolver_t), INTENT(IN) :: self
     REAL(WP)               , INTENT(IN) :: observers(:,:)          ! (Nobs, 3)

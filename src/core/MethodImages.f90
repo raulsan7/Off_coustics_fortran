@@ -4,7 +4,7 @@ USE omp_lib
 USE IOUtils, ONLY: save_to_hdf5
 USE Kinds, ONLY: WP, I32, PI, I1
 USE WindTurbine, ONLY: WindTurbine_t
-USE AcousticSolver, ONLY: AcousticSolver_t
+USE AcousticSolver, ONLY: AcousticSolver_t, save_turbine_params
 
 IMPLICIT NONE
 
@@ -24,6 +24,9 @@ TYPE :: ImageSystem_t
 END TYPE ImageSystem_t
 
 
+! ------------------------
+! Main Type Definition
+! ------------------------
 TYPE, EXTENDS(AcousticSolver_t) :: MethodImages_t
     
     INTEGER(I32) :: N_images         = 30           ! [-] Number of image levels to compute
@@ -31,7 +34,7 @@ TYPE, EXTENDS(AcousticSolver_t) :: MethodImages_t
     INTEGER(I32) :: Upper_BC         = -1           ! [-] Upper Boundary condition -1 for  p = 0
     INTEGER(I32) :: Lower_BC         = +1           ! [-] Lower Boundary condition +1 for dp = 0
     REAL(WP)     :: Upper_HBC        = 0.0_WP       ! [m] z-coordinate of the upper reflecting plane (e.g. free surface)
-    REAL(WP)     :: Lower_HBC        = -30.0        ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
+    REAL(WP)     :: Lower_HBC        = -30.0_WP     ! [m] z-coordinate of the lower reflecting plane (e.g. seabed)
     REAL(WP)     :: up_R             = 1.0_WP       ! [-] Attenuation coefficient for upper boundary reflections
     REAL(WP)     :: lw_R             = 0.5_WP       ! [-] Attenuation coefficient for lower boundary reflections
  
@@ -54,8 +57,6 @@ TYPE, EXTENDS(AcousticSolver_t) :: MethodImages_t
     PROCEDURE :: get_name           => get_name_MethodImages
     PROCEDURE :: compute_pressure   => compute_pressure_MethodImages
     PROCEDURE :: save_parameters    => save_parameters_MethodImages
-    PROCEDURE :: save_acoustics     => save_acoustics_MethodImages
-
 
 END TYPE MethodImages_t
 
@@ -256,90 +257,21 @@ SUBROUTINE save_parameters_MethodImages(self)
 
     ! Local variables
     CHARACTER(len=512) :: save_path
-    INTEGER(I32)       :: Nturb, i
-    CHARACTER(len=2)   :: ichar
 
-    Nturb    = size(self % turbines)
     save_path = trim(self % save_path)
+
     ! Solver
     CALL save_to_hdf5(save_path, "N_images" , self % N_images)
-    CALL save_to_hdf5(save_path, "c_wat"    , self % N_images)
-    CALL save_to_hdf5(save_path, "rho_wat"  , self % N_images)
-    CALL save_to_hdf5(save_path, "Upper_HBC", self % N_images)
-    CALL save_to_hdf5(save_path, "Lower_HBC", self % N_images)
-    CALL save_to_hdf5(save_path, "p_ref"    , self % N_images)
-    CALL save_to_hdf5(save_path, "Nturb"    , Nturb)
+    CALL save_to_hdf5(save_path, "c_wat"    , self % c)
+    CALL save_to_hdf5(save_path, "rho_wat"  , self % rho)
+    CALL save_to_hdf5(save_path, "Upper_HBC", self % Upper_HBC)
+    CALL save_to_hdf5(save_path, "Lower_HBC", self % Lower_HBC)
+    CALL save_to_hdf5(save_path, "p_ref"    , self % p_ref)
+    CALL save_to_hdf5(save_path, "Nturb"    , size(self % turbines))
     
-    ! Turbines
-    if (Nturb > 1) then
-        do i = 1, Nturb
-            WRITE(ichar, '(I2.2)') i
-            CALL save_to_hdf5(save_path, "WindSpeed_"       // ichar, self % turbines(i) % WindSpeed)
-            CALL save_to_hdf5(save_path, "WindDir_"         // ichar, self % turbines(i) % WindDir)
-            CALL save_to_hdf5(save_path, "Depth_"           // ichar, self % turbines(i) % Depth)
-            CALL save_to_hdf5(save_path, "Structure_nodes_" // ichar, self % turbines(i) % x_all)
-            CALL save_to_hdf5(save_path, "Case_type_"       // ichar, self % turbines(i) % case_type)
-            CALL save_to_hdf5(save_path, "In_farm_"         // ichar, self % turbines(i) % in_farm)
-            CALL save_to_hdf5(save_path, "AxisPos_"         // ichar, self % turbines(i) % AxisPos)
-            CALL save_to_hdf5(save_path, "BariPos_"         // ichar, self % turbines(i) % BariPos)
-        end do
-    elseif (Nturb == 1) then
-        CALL save_to_hdf5(save_path, "WindSpeed"       , self % turbines(1) % WindSpeed)
-        CALL save_to_hdf5(save_path, "WindDir"         , self % turbines(1) % WindDir)
-        CALL save_to_hdf5(save_path, "Depth"           , self % turbines(1) % Depth)
-        CALL save_to_hdf5(save_path, "Structure_nodes" , self % turbines(1) % x_all)
-        CALL save_to_hdf5(save_path, "Case_type"       , self % turbines(1) % case_type)
-        CALL save_to_hdf5(save_path, "In_farm"         , self % turbines(1) % in_farm)
-        CALL save_to_hdf5(save_path, "AxisPos"         , self % turbines(1) % AxisPos)
-        CALL save_to_hdf5(save_path, "BariPos"         , self % turbines(1) % BariPos)
-    end if
-
+    CALL save_turbine_params(self)
 
 END SUBROUTINE save_parameters_MethodImages
-
-
-SUBROUTINE save_acoustics_MethodImages(Self, var_name, var)
-    CLASS(MethodImages_t), INTENT(IN) :: self
-    CHARACTER(len=*)     , INTENT(IN) :: var_name
-    CLASS(*)             , INTENT(IN) :: var(..)
-
-    ! Local variables
-    CHARACTER(len=512) :: save_path
-
-    save_path = trim(self % save_path)
-
-    ! Evaluate dimensions
-    SELECT RANK (v_rank => var)
-    RANK(0) ! Scalars
-        SELECT TYPE (v => v_rank)
-        TYPE IS (REAL(WP))   ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (INTEGER)    ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (LOGICAL)    ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        END SELECT
-
-    RANK(1) ! Arrays 1D
-        SELECT TYPE (v => v_rank)
-        TYPE IS (REAL(WP))   ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (INTEGER)    ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
-        END SELECT
-
-    RANK(2) ! Arrays 2D
-        SELECT TYPE (v => v_rank)
-        TYPE IS (REAL(WP))   ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (INTEGER)    ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
-        END SELECT
-
-    RANK(3) ! Arrays 3D
-        SELECT TYPE (v => v_rank)
-        TYPE IS (REAL(WP))   ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (INTEGER)    ; CALL save_to_hdf5(save_path, trim(var_name), v)
-        TYPE IS (COMPLEX(WP)); CALL save_to_hdf5(save_path, trim(var_name), v)
-        END SELECT
-    END SELECT
-END SUBROUTINE save_acoustics_MethodImages
 
 
 ! ---------- HELPERS ---------- !
