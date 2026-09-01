@@ -548,13 +548,100 @@ FUNCTION alpha_hankel(k, D) RESULT(alpha)
 
     ALLOCATE(H0(Nfreqs), H2(Nfreqs), H1p(Nfreqs), alpha(Nfreqs))
         
-    H0 = CMPLX(bessel_jn(0, ka), -bessel_yn(0, ka), kind=WP)      ! H_0^(2) order 0 second specie (H_n^(2) = Jn + iYn)
-    H2 = CMPLX(bessel_jn(2, ka), -bessel_yn(2, ka), kind=WP)      ! H_2^(2) order 2 second specie (H_n^(2) = Jn + iYn)
-    H1p = 0.5_WP * (H0 - H2)                                      ! dH_1^(1) order 1 first specie (H_n^(1) = Jn - iYn)
+    H0 = CMPLX(bessel_jn(0, ka), -bessel_yn(0, ka), kind=WP)      ! H_0^(2) order 0 second specie (H_n^(2) = Jn - iYn)
+    H2 = CMPLX(bessel_jn(2, ka), -bessel_yn(2, ka), kind=WP)      ! H_2^(2) order 2 second specie (H_n^(2) = Jn - iYn)
+    H1p = 0.5_WP * (H0 - H2)                                      ! dH_1^(1) order 1 first specie (H_n^(1) = Jn + iYn)
 
     alpha = -3.0_WP * I1 /(PI * ka**2 * H1p)
 
 END FUNCTION alpha_hankel
 
+
+SUBROUTINE compute_hankel_complex(k_rm, r, H0, H1)
+    !> Computes ultra-efficiently the Hankel functions of the first kind (H0 and H1)
+    !> for a wavenumber that is Real (Propagative Mode) or Pure Imaginary (Evanescent Mode)
+    !> using standard intrinsic functions and polynomial approximations for K0 and K1.
+
+    COMPLEX(WP), INTENT(IN)  :: k_rm
+    REAL(WP), INTENT(IN)     :: r
+    COMPLEX(WP), INTENT(OUT) :: H0, H1
+
+    ! Local variables
+    REAL(WP) :: Z_real, Y
+
+    if (abs(aimag(k_rm)) <= 1.0e-12_WP) then
+        ! Propagative Mode: k_rm is Real
+        Z_real = real(k_rm, WP) * r
+        H0 = CMPLX(bessel_jn(0, Z_real), bessel_yn(0, Z_real), kind=WP)
+        H1 = CMPLX(bessel_jn(1, Z_real), bessel_yn(1, Z_real), kind=WP)
+    else
+        ! Evanescent Mode: k_rm is Pure Imaginary
+        Y = abs(aimag(k_rm)) * r
+        H0 = CMPLX(0.0_WP, -2.0_WP / PI * bessel_k0(Y), kind=WP)
+        H1 = CMPLX(-2.0_WP / PI * bessel_k1(Y), 0.0_WP, kind=WP)   
+    end if
+
+END SUBROUTINE compute_hankel_complex
+
+
+PURE FUNCTION bessel_k0(x) RESULT(k0)
+    !> Modified Bessel function of the second kind, order 0: K0(x) for x > 0
+    !> Abramowitz and Stegun approximation (9.8.5 - 9.8.6)
+    REAL(WP), INTENT(IN) :: x
+    REAL(WP) :: k0, y, t, i0
+
+    if (x <= 0.0_WP) then
+        k0 = 0.0_WP
+        return
+    end if
+
+    if (x <= 2.0_WP) then
+        y = (x / 3.75_WP)**2
+        i0 = 1.0_WP + y * (3.5156229_WP + y * (3.0899424_WP + y * (1.2067492_WP + &
+             y * (0.2659732_WP + y * (0.0360768_WP + y * 0.0045813_WP)))))
+
+        t = x / 2.0_WP
+        y = t * t
+        k0 = -log(t) * i0 + (-0.57721566_WP + y * (0.42278420_WP + y * (0.23069756_WP + &
+             y * (0.03488590_WP + y * (0.00262698_WP + y * (0.00010750_WP + &
+             y * 0.00000740_WP))))))
+    else
+        y = 2.0_WP / x
+        k0 = (exp(-x) / sqrt(x)) * (1.25331414_WP + y * (-0.07832358_WP + &
+             y * (0.02189568_WP + y * (-0.01062449_WP + y * (0.00587872_WP + &
+             y * (-0.00251540_WP + y * 0.00053208_WP))))))
+    end if
+END FUNCTION bessel_k0
+
+
+PURE FUNCTION bessel_k1(x) RESULT(k1)
+    !> Modified Bessel function of the second kind, order 1: K1(x) for x > 0
+    !> Abramowitz and Stegun approximation (9.8.9 - 9.8.10)
+    REAL(WP), INTENT(IN) :: x
+    REAL(WP) :: k1, y, t, i1
+
+    if (x <= 0.0_WP) then
+        k1 = 0.0_WP
+        return
+    end if
+
+    if (x <= 2.0_WP) then
+        y = (x / 3.75_WP)**2
+        i1 = x * (0.5_WP + y * (0.87890594_WP + y * (0.51498869_WP + &
+             y * (0.15084934_WP + y * (0.02658733_WP + y * (0.00301532_WP + &
+             y * 0.00032411_WP))))))
+
+        t = x / 2.0_WP
+        y = t * t
+        k1 = log(t) * i1 + (1.0_WP / x) * (1.0_WP + y * (0.15443144_WP + &
+             y * (-0.67278579_WP + y * (-0.18156897_WP + y * (-0.01919402_WP + &
+             y * (-0.00110404_WP + y * (-0.00004686_WP)))))))
+    else
+        y = 2.0_WP / x
+        k1 = (exp(-x) / sqrt(x)) * (1.25331414_WP + y * (0.23498619_WP + &
+             y * (-0.03655620_WP + y * (0.01504268_WP + y * (-0.00780353_WP + &
+             y * (0.00325614_WP + y * (-0.00068245_WP)))))))
+    end if
+END FUNCTION bessel_k1
 
 END MODULE MathUtils
