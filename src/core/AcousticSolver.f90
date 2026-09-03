@@ -253,7 +253,7 @@ SUBROUTINE run_polar(self, r, z, n_theta, center, block_size)
 
     ! Local variables
     COMPLEX(WP), ALLOCATABLE :: p(:,:)
-    REAL(WP)   , ALLOCATABLE :: observers_(:,:)
+    REAL(WP)   , ALLOCATABLE :: observers_(:,:), theta_deg_polar(:)
     REAL(WP)                 :: r_, z_, center_(2), theta_deg, theta_rad, d_theta
     INTEGER(I32)             :: n_theta_, block_size_, i
 
@@ -267,7 +267,7 @@ SUBROUTINE run_polar(self, r, z, n_theta, center, block_size)
     if (PRESENT(center)) center_ = center
 
     ! Build observers array
-    ALLOCATE(observers_(n_theta_, 3))
+    ALLOCATE(observers_(n_theta_, 3), theta_deg_polar(n_theta_))
     d_theta = 360.0_WP / REAL(n_theta_, WP)
         
     do i = 1, n_theta_
@@ -276,6 +276,7 @@ SUBROUTINE run_polar(self, r, z, n_theta, center, block_size)
         observers_(i, 1) = r_ * COS(theta_rad) + center_(1)
         observers_(i, 2) = r_ * SIN(theta_rad) + center_(2)
         observers_(i, 3) = z_
+        theta_deg_polar(i) = theta_deg
     end do
 
     CALL self % check_observers_distances(observers_)
@@ -294,7 +295,7 @@ SUBROUTINE run_polar(self, r, z, n_theta, center, block_size)
     CALL self % save_acoustics("P_polar", p)
     CALL self % save_acoustics("R_polar", r_)
     CALL self % save_acoustics("Z_polar", z_)
-    CALL self % save_acoustics("Theta_deg_polar", theta_deg)
+    CALL self % save_acoustics("Theta_deg_polar", theta_deg_polar)
     CALL self % save_acoustics("Obs_polar", observers_)
     CALL self % save_acoustics("Center_polar", center_)
 

@@ -42,10 +42,11 @@ CALL monopile % init( &
 CALL monopile % read_input(verbose=.true.)
 CALL monopile % compute_force(filter_freqs=.true., verbose=.true.)
 
-! CALL acoustic_model % init(monopile, debug = .true., name="plot_mn_SD30")
-! CALL acoustic_model % run_all()
-CALL analytical_model % init(monopile, verbose=.true., name="plot_mn_ANM", debug=.true.)
-CALL analytical_model % run_all()
+CALL acoustic_model % init(monopile, debug = .true., name="plot_mn_SD30")
+CALL acoustic_model % run_all()
+! CALL analytical_model % init(monopile, verbose=.true., name="plot_mn_ANM", debug=.true.)
+! CALL analytical_model % run_all()
+! CALL analytical_model % run_polar()
 
 ! ---------- DISPLAY ELPASED TIME ---------- !
 CALL format_elapsed(start_time, elapsed_display, tag)
