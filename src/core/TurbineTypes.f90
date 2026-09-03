@@ -367,7 +367,7 @@ SUBROUTINE save_specific_params_DTU10MWMonopile(self, save_path, ichar)
     CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: ichar
     
     if (PRESENT(ichar)) then
-        CALL save_to_hdf5(save_path, "D"_        // ichar, self % D)
+        CALL save_to_hdf5(save_path, "D_"        // ichar, self % D)
         CALL save_to_hdf5(save_path, "rho_mat_"  // ichar, self % rho_mat)
         CALL save_to_hdf5(save_path, "wet_area_" // ichar, self % wet_area)
     else
@@ -476,6 +476,73 @@ SUBROUTINE init_DTU10Floating(self, debug, rootname, output_dir, save_dir, save_
     self % case_type = "Floating"
 
 END SUBROUTINE init_DTU10MWMonopile
+
+
+FUNCTION filter_frequencies_DTU10MWFloating(self) RESULT(mask)
+    USE IOUtils, ONLY: read_curve
+    USE MathUtils, ONLY: generate_timeseries_banded_sines, filter_non_usefull_freqs
+
+    CLASS(DTU10MWFloating), INTENT(INOUT) :: self
+    LOGICAL, ALLOCATABLE                  :: mask(:)
+
+    ! Local variables
+    CHARACTER(len=20), ALLOCATABLE :: keys(:)
+    REAL(WP)         , ALLOCATABLE :: freqs_amp(:,:)
+    REAL(WP)         , ALLOCATABLE :: freqs_to_use(:)
+    REAL(WP)                       :: rpm, freqs_over = 10.0_WP
+
+    REAL(WP), ALLOCATABLE :: tmp_signal(:)
+
+    ! Read rpm at current wind speed
+    rpm = read_curve(self % path_rpm, self % WindSpeed)
+
+    ! Generate drivetrain excitation spectrum
+    CALL drivetrain10MW_excitation_spectrum(rpm=rpm, freqs_amp=freqs_amp, keys=keys)
+
+    ! Get allowed frequencies
+    CALL generate_timeseries_banded_sines(peaks=freqs_amp, keys=keys, t=self % Time, &
+                                         zeta=0.02_WP, used_freqs=.true., a=tmp_signal, &
+                                         freqs_out=freqs_to_use)
+
+    ! Build mask
+    print *, "DTU10MWFloating.filter_frequencies(): FREQS_OVER IS HARDCODED TO 10.0 Hz"
+    mask = filter_non_usefull_freqs(self % Freqs, freqs_to_use, freqs_over)
+
+    DEALLOCATE(tmp_signal)
+
+    DEALLOCATE(freqs_amp, keys, freqs_to_use)
+
+END FUNCTION filter_frequencies_DTU10MWFloating
+
+
+SUBROUTINE save_specific_params_DTU10MWFloating(self, save_path, ichar)
+    USE IOUtils, ONLY: save_to_hdf5
+
+    CLASS(DTU10MWFloating), INTENT(IN) :: self
+    CHARACTER(len=*)      , INTENT(IN) :: save_path
+    CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: ichar
+    
+    if (PRESENT(ichar)) then
+        CALL save_to_hdf5(save_path, "col_D_"       // ichar, self % col_D)
+        CALL save_to_hdf5(save_path, "XsecA_"       // ichar, self % XsecA)
+        CALL save_to_hdf5(save_path, "XsecB_"       // ichar, self % XsecB)
+        CALL save_to_hdf5(save_path, "t_"           // ichar, self % t)
+        CALL save_to_hdf5(save_path, "rho_mat_"     // ichar, self % rho_mat)
+        CALL save_to_hdf5(save_path, "wet_area_"    // ichar, self % wet_area)
+        CALL save_to_hdf5(save_path, "col_members_" // ichar, self % col_members)
+        CALL save_to_hdf5(save_path, "pon_members_" // ichar, self % pon_members)
+    else
+        CALL save_to_hdf5(save_path, "col_D_"      , self % col_D)
+        CALL save_to_hdf5(save_path, "XsecA_"      , self % XsecA)
+        CALL save_to_hdf5(save_path, "XsecB_"      , self % XsecB)
+        CALL save_to_hdf5(save_path, "t_"          , self % t)
+        CALL save_to_hdf5(save_path, "rho_mat_"    , self % rho_mat)
+        CALL save_to_hdf5(save_path, "wet_area_"   , self % wet_area)
+        CALL save_to_hdf5(save_path, "col_members_", self % col_members)
+        CALL save_to_hdf5(save_path, "pon_members_", self % pon_members)
+    end if
+
+END SUBROUTINE save_specific_params_DTU10MWFloating
 
 
 
