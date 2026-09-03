@@ -94,10 +94,12 @@ END INTERFACE
 ! Save specific turbine parameters
 ABSTRACT INTERFACE
 
-    SUBROUTINE save_specific_params_DTU10MWMonopile(self)
+    SUBROUTINE save_specific_params_i(self, save_path, ichar)
         IMPORT:: WindTurbine_t
         CLASS(WindTurbine_t), INTENT(IN) :: self
-    END SUBROUTINE save_specific_params_DTU10MWMonopile
+        CHARACTER(len=*)    , INTENT(IN) :: save_path
+        CHARACTER(len=*)    , INTENT(IN), OPTIONAL :: ichar
+    END SUBROUTINE save_specific_params_i
 END INTERFACE
 
 ! Impedance correction
@@ -278,7 +280,7 @@ SUBROUTINE read_input(self, in_farm, verbose, skip, From, Upto)
         print '(A)', repeat('-', 68)
         print '(A, A)',  'Type: ', trim(self%case_type)
         print '(A, F5.1, A, F5.1, A)', 'Wind Speed: ', self%WindSpeed, ' m/s   | Wind Direction: ', self%WindDir, ' deg'
-        print '(A, F4.1, A, F4.1, A, F4.1, A)', 'Water Depth: ', self%Depth,&
+        print '(A, F5.1, A, F4.1, A, F4.1, A)', 'Water Depth: ', self%Depth,&
          ' m   | Position: (', self%AxisPos(1), ', ', self%AxisPos(2), ') m'
         print '(A, I6, A, F6.4, A)', 'Time Series: ', size(self%Time), ' samples @ ', dt, ' s/sample'
         print '(A)', repeat('=', 70)
