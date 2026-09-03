@@ -29,13 +29,39 @@ TYPE, EXTENDS(WindTurbine_t) :: DTU10MWMonopile
     PROCEDURE :: compute_force                 => compute_force_DTU10MWMonopile
     PROCEDURE :: compute_mass                  => compute_mass_DTU10MWMonopile
     PROCEDURE :: filter_frequencies            => filter_frequencies_DTU10MWMonopile
+    PROCEDURE :: save_specific_params          => save_specific_params_DTU10MWMonopile
     PROCEDURE :: get_impedance_corrected_force => get_impedance_corrected_force_DTU10MWMonopile
-
 
 END TYPE DTU10MWMonopile
 
 
 ! ---------- TURBINE MODEL 2 ---------- !
+TYPE, EXTENDS(WindTurbine_t) :: DTU10MWFloating
+    ! Physical and structural parameters specific to the DTU 10 MW FLoating CENER DeltaWind version
+    REAL(WP) :: col_D = 14.5_WP         ! [m] Columns Diameter
+    REAL(wp) :: XsecA = 10.875_WP       ! [m] Pontoon width
+    REAL(wp) :: XsecB = 7.0_WP          ! [m] Pontoon height
+    REAL(wp) :: rho_wat = 1025.0_WP     ! [kg/m^3] Water density
+    REAL(wp) :: rho_mat = 7850.0_WP     ! [kg/m^3] Material density
+    REAL(wp) :: t       = 0.023_WP      ! [m] Wall thickness
+    REAL(wp) :: wet_area = 9659.07      ! [m^2] Wetted area
+
+    INTEGER(I32) :: col_members(3,2) = reshape([0,1, 2,3, 4,5], [3,2])  ! [-] Column members ID list: [[0,1],[2,3],[4,5]]
+    INTEGER(I32) :: pon_members(3,1) = reshape([6, 7, 6], [3,1])        ! [-] Pontoon members ID lists: [[6],[7],[8]]
+
+    ! Path to rotor speed curve CSV file
+    CHARACTER(len=:), ALLOCATABLE :: path_rpm
+
+    CONTAINS
+    ! --- Deferred(abstract) procedures --- !
+    PROCEDURE :: init                          => init_DTU10MWFloating
+    PROCEDURE :: compute_force                 => compute_force_DTU10MWFloating
+    PROCEDURE :: compute_mass                  => compute_mass_DTU10MWFloating
+    PROCEDURE :: filter_frequencies            => filter_frequencies_DTU10MWFloating
+    PROCEDURE :: save_specific_params          => save_specific_params_DTU10MWFloating
+    PROCEDURE :: get_impedance_corrected_force => get_impedance_corrected_force_DTU10MWFloating
+
+END TYPE DTU10MWFloating
 
 
 CONTAINS
@@ -77,13 +103,8 @@ SUBROUTINE init_DTU10MWMonopile(self, debug, rootname, output_dir, save_dir, sav
             Nmembers   = Nmembers,   &
             Nnodes     = Nnodes      )
 
-    ! Set monopile-specific physical parameters
-    self % D        = 9.0_WP
-    self % rho_wat  = 1025.0_WP
-    self % rho_mat  = 8500._WP
-    self % wet_area = 848.12_WP
 
-    ! Define path to rpm curve
+    ! Define path to rpm curve HARCODED
     self % path_rpm = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
 
     ! Verify that the rpm curve file exists
@@ -338,6 +359,26 @@ FUNCTION filter_frequencies_DTU10MWMonopile(self) RESULT(mask)
 END FUNCTION filter_frequencies_DTU10MWMonopile
 
 
+SUBROUTINE save_specific_params_DTU10MWMonopile(self, save_path, ichar)
+    USE IOUtils, ONLY: save_to_hdf5
+
+    CLASS(DTU10MWMonopile), INTENT(IN) :: self
+    CHARACTER(len=*)      , INTENT(IN) :: save_path
+    CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: ichar
+    
+    if (PRESENT(ichar)) then
+        CALL save_to_hdf5(save_path, "D"_        // ichar, self % D)
+        CALL save_to_hdf5(save_path, "rho_mat_"  // ichar, self % rho_mat)
+        CALL save_to_hdf5(save_path, "wet_area_" // ichar, self % wet_area)
+    else
+        CALL save_to_hdf5(save_path, "D", self % D)
+        CALL save_to_hdf5(save_path, "rho_mat", self % rho_mat)
+        CALL save_to_hdf5(save_path, "wet_area", self % wet_area)
+    end if
+
+END SUBROUTINE save_specific_params_DTU10MWMonopile
+
+
 FUNCTION get_impedance_corrected_force_DTU10MWMonopile(self, c) RESULT(corrected_F)
     USE MathUtils, ONLY: alpha_hankel
 
@@ -385,7 +426,56 @@ FUNCTION get_impedance_corrected_force_DTU10MWMonopile(self, c) RESULT(corrected
 
 END FUNCTION get_impedance_corrected_force_DTU10MWMonopile
 
+
 ! ---------- TURBINE MODEL 2 ---------- !
+SUBROUTINE init_DTU10Floating(self, debug, rootname, output_dir, save_dir, save_name, &
+                         WindSpeed, WindDir, Depth, AxisPos, BariPos, Binary, &
+                         Nmembers, Nnodes)
+    CLASS(DTU10MWFloating), INTENT(INOUT)        :: self
+    LOGICAL               , INTENT(IN), OPTIONAL :: debug
+    CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: rootname
+    CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: output_dir
+    CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: save_dir
+    CHARACTER(len=*)      , INTENT(IN), OPTIONAL :: save_name
+    REAL(WP)              , INTENT(IN), OPTIONAL :: WindSpeed
+    REAL(WP)              , INTENT(IN), OPTIONAL :: WindDir
+    REAL(WP)              , INTENT(IN), OPTIONAL :: Depth
+    REAL(WP)              , INTENT(IN), OPTIONAL :: AxisPos(2)
+    REAL(WP)              , INTENT(IN), OPTIONAL :: BariPos(2)
+    LOGICAL               , INTENT(IN), OPTIONAL :: Binary
+    INTEGER(I32)          , INTENT(IN), OPTIONAL :: Nmembers
+    INTEGER(I32)          , INTENT(IN), OPTIONAL :: Nnodes
+
+    ! Local variables
+    LOGICAL :: exists = .false.
+
+    CALL init( self, &
+            debug      = debug,      &
+            rootname   = rootname,   &
+            output_dir = output_dir, &
+            save_dir   = save_dir,   &
+            save_name  = save_name,  &
+            WindSpeed  = WindSpeed,  &
+            WindDir    = WindDir,    &
+            Depth      = Depth,      &
+            AxisPos    = AxisPos,    &
+            BariPos    = BariPos,    &
+            Binary     = Binary,     &
+            Nmembers   = Nmembers,   &
+            Nnodes     = Nnodes      )
+
+
+    ! Define path to rpm curve HARCODED
+    self % path_rpm = "../wind_speed_curves_DTU_10MW/rpm_ws.csv"
+
+    ! Verify that the rpm curve file exists
+    inquire(file= self % path_rpm, exist=exists)
+    if (.not. exists) error stop "DTU10MWFloating % init: RPM curve file not found: " // self % path_rpm
+
+    ! Set the case type
+    self % case_type = "Floating"
+
+END SUBROUTINE init_DTU10MWMonopile
 
 
 

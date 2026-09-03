@@ -52,6 +52,7 @@ TYPE, ABSTRACT :: WindTurbine_t
     PROCEDURE(compute_force_i)                , DEFERRED :: compute_force
     PROCEDURE(compute_mass_i)                 , DEFERRED :: compute_mass
     PROCEDURE(filter_frequencies_i)           , DEFERRED :: filter_frequencies
+    PROCEDURE(save_specific_params_i)         , DEFERRED :: save_specific_params
     PROCEDURE(get_impedance_corrected_force_i), DEFERRED :: get_impedance_corrected_force
 
 END TYPE WindTurbine_t
@@ -88,6 +89,15 @@ ABSTRACT INTERFACE
         CLASS(WindTurbine_t), INTENT(INOUT) :: self
         LOGICAL, ALLOCATABLE                :: mask(:)
     END FUNCTION filter_frequencies_i
+END INTERFACE
+
+! Save specific turbine parameters
+ABSTRACT INTERFACE
+
+    SUBROUTINE save_specific_params_DTU10MWMonopile(self)
+        IMPORT:: WindTurbine_t
+        CLASS(WindTurbine_t), INTENT(IN) :: self
+    END SUBROUTINE save_specific_params_DTU10MWMonopile
 END INTERFACE
 
 ! Impedance correction

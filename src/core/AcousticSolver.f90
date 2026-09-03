@@ -109,6 +109,7 @@ SUBROUTINE save_turbine_params(self)
             CALL save_to_hdf5(save_path, "In_farm_"         // ichar, self % turbines(i) % in_farm)
             CALL save_to_hdf5(save_path, "AxisPos_"         // ichar, self % turbines(i) % AxisPos)
             CALL save_to_hdf5(save_path, "BariPos_"         // ichar, self % turbines(i) % BariPos)
+            CALL self % turbines(i) % save_specific_params(save_path, ichar)
         end do
     elseif (Nturb == 1) then
         CALL save_to_hdf5(save_path, "WindSpeed"       , self % turbines(1) % WindSpeed)
@@ -119,6 +120,7 @@ SUBROUTINE save_turbine_params(self)
         CALL save_to_hdf5(save_path, "In_farm"         , self % turbines(1) % in_farm)
         CALL save_to_hdf5(save_path, "AxisPos"         , self % turbines(1) % AxisPos)
         CALL save_to_hdf5(save_path, "BariPos"         , self % turbines(1) % BariPos)
+        CALL self % turbines(1) % save_specific_params(save_path)
     end if
 
 END SUBROUTINE save_turbine_params
