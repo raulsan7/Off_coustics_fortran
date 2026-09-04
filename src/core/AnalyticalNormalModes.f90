@@ -60,7 +60,7 @@ SUBROUTINE init_AnalyticalNormalModes(self, turbines, Nmodes, c_wat, rho_wat, &
     ! Local variables
     CHARACTER(len=512) :: name_
     REAL(WP)           :: f_max
-    INTEGER(I32)       :: m_prop, near_field_buffer
+    INTEGER(I32)       :: m_prop, near_field_buffer, i
 
 
     if (PRESENT(turbines)) then
