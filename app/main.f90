@@ -5,6 +5,7 @@
 PROGRAM MAIN
 
 USE Kinds, ONLY: I32, WP
+USE omp_lib, ONLY: omp_get_wtime
 USE MathUtils, ONLY: format_elapsed
 USE MethodImages, ONLY: MethodImages_t
 USE TurbineTypes, ONLY: DTU10MWMonopile, DTU10MWFloating
@@ -26,7 +27,7 @@ REAL(WP) :: start_time, elapsed_display
 CHARACTER(len=8) :: tag
 
 
-CALL cpu_time(start_time)
+start_time = REAL(omp_get_wtime(), WP)
 ! ---------------------------------------------------------
 ! 1. Initialization and Banner
 ! ---------------------------------------------------------
@@ -54,13 +55,13 @@ CALL floating % init( &
         save_dir  = "./turbine_acoustic_data/", &
         WindSpeed = 11.4_WP, &
         WindDir   = 0.0_WP, &
-        Depth     = 350.0_WP, &
+        Depth     = 30.0_WP, &
         Nmembers  = 9, &
         Nnodes    = 9)
 
 CALL floating % read_input(verbose=.true.)
 CALL floating % compute_force(filter_freqs=.true., verbose=.true.)
-CALL acoustic_model % init(floating, debug = .true., name="plot_fl_SD30", Lower_HBC=-350.0_WP)
+CALL acoustic_model % init(floating, debug = .true., name="plot_fl_SD30_shallow", Lower_HBC=-30.0_WP)
 ! CALL acoustic_model % run_all()
 CALL acoustic_model % run_spectrums(z_obs = 15.0_WP)
 CALL acoustic_model % run_polar(z = -15.0_WP)

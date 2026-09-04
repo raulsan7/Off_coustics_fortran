@@ -22,18 +22,44 @@ END INTERFACE
 CONTAINS
 
 
+! SUBROUTINE format_elapsed(start_time, elapsed_display, tag)
+!     ! Returns elapsed time since start_time and a human-friendly unit tag
+!     REAL(WP), INTENT(IN)  :: start_time
+!     REAL(WP), INTENT(OUT) :: elapsed_display
+!     CHARACTER(len=*), INTENT(OUT) :: tag
+
+!     REAL(WP) :: end_time, elapsed_time
+
+!     CALL cpu_time(end_time)
+!     elapsed_time = end_time - start_time
+
+!     elapsed_display = elapsed_time
+!     if (elapsed_display > 60.0_WP .and. elapsed_display <= 3600.0_WP) then
+!         elapsed_display = elapsed_display / 60.0_WP
+!         tag = "min"
+!     elseif (elapsed_display > 3600.0_WP .and. elapsed_display <= 86400.0_WP) then
+!         elapsed_display = elapsed_display / 3600.0_WP
+!         tag = "h"
+!     elseif (elapsed_display > 86400.0_WP) then
+!         elapsed_display = elapsed_display / 86400.0_WP
+!         tag = "days"
+!     else
+!         tag = "s"
+!     end if
+
+! END SUBROUTINE format_elapsed
 SUBROUTINE format_elapsed(start_time, elapsed_display, tag)
-    ! Returns elapsed time since start_time and a human-friendly unit tag
-    REAL(WP), INTENT(IN)  :: start_time
+    ! Returns real physical elapsed time (wall-clock) since start_time
+    REAL(WP), INTENT(IN) :: start_time
     REAL(WP), INTENT(OUT) :: elapsed_display
     CHARACTER(len=*), INTENT(OUT) :: tag
-
     REAL(WP) :: end_time, elapsed_time
-
-    CALL cpu_time(end_time)
+    
+    ! CORRECTED: Use OpenMP wall-clock timer instead of processor CPU_TIME
+    end_time = real(omp_get_wtime(), WP)
     elapsed_time = end_time - start_time
-
     elapsed_display = elapsed_time
+    
     if (elapsed_display > 60.0_WP .and. elapsed_display <= 3600.0_WP) then
         elapsed_display = elapsed_display / 60.0_WP
         tag = "min"
@@ -46,7 +72,6 @@ SUBROUTINE format_elapsed(start_time, elapsed_display, tag)
     else
         tag = "s"
     end if
-
 END SUBROUTINE format_elapsed
 
 
