@@ -60,7 +60,7 @@ CALL floating % init( &
 
 CALL floating % read_input(verbose=.true.)
 CALL floating % compute_force(filter_freqs=.true., verbose=.true.)
-CALL acoustic_model % init(floating, debug = .true., name="plot_fl_ANM", Lower_HBC=-350.0_WP)
+CALL acoustic_model % init(floating, debug = .true., name="plot_fl_SD30", Lower_HBC=-350.0_WP)
 ! CALL acoustic_model % run_all()
 CALL acoustic_model % run_spectrums(z_obs = 15.0_WP)
 CALL acoustic_model % run_polar(z = -15.0_WP)

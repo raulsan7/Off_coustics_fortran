@@ -912,20 +912,111 @@ END SUBROUTINE save_specific_params_DTU10MWFloating
 
 
 FUNCTION get_impedance_corrected_force_DTU10MWFloating(self, c) RESULT(corrected_F)
-        USE MathUtils, ONLY: alpha_hankel
-        CLASS(DTU10MWFloating), INTENT(IN) :: self
-        REAL(WP) , INTENT(IN) :: c
-        COMPLEX(WP) , ALLOCATABLE :: corrected_F(:,:,:)
+    USE MathUtils, ONLY: alpha_hankel
+    CLASS(DTU10MWFloating), INTENT(IN) :: self
+    REAL(WP) , INTENT(IN) :: c
+    COMPLEX(WP) , ALLOCATABLE :: corrected_F(:,:,:)
 
-        ! Local variables
-        INTEGER(I32) :: Nm, Nn, Nnodes_wet, nf, c_idx, m, j, i, m0, m1, global_idx
-        INTEGER(I32), ALLOCATABLE :: original_to_wet(:)
-        COMPLEX(WP), ALLOCATABLE :: alpha_full(:,:)
-        REAL(WP), ALLOCATABLE :: k(:)
-        COMPLEX(WP), ALLOCATABLE :: alpha_col(:), alpha_pon(:)
-        REAL(WP) :: D_pon
+    ! Local variables (CORRECTED: Added idx and p_idx to the list)
+    INTEGER(I32) :: Nm, Nn, Nnodes_wet, nf, c_idx, p_idx, m, j, i, m0, m1, global_idx, idx
+    INTEGER(I32), ALLOCATABLE :: original_to_wet(:)
+    COMPLEX(WP), ALLOCATABLE :: alpha_full(:,:)
+    REAL(WP), ALLOCATABLE :: k(:)
+    COMPLEX(WP), ALLOCATABLE :: alpha_col(:), alpha_pon(:)
+    REAL(WP) :: D_pon
 
-        return
+    Nm = self % Nmembers
+    Nn = self % Nnodes
+    Nnodes_wet = size(self % x, 1)
+    nf = size(self % Freqs)
+
+    ! 1. Map original flat node indices to wetted nodes (-1 for dry/removed nodes)
+    ALLOCATE(original_to_wet(Nm * Nn))
+    original_to_wet = -1
+    idx = 1
+    do i = 1, Nm * Nn
+        if (self % keep_flat(i)) then
+            original_to_wet(i) = idx
+            idx = idx + 1
+        end if
+    end do
+
+    ! 2. Initialize the full scattering correction array (nf, Nnodes_wet) with 1.0
+    ALLOCATE(alpha_full(nf, Nnodes_wet))
+    alpha_full = (1.0_WP, 0.0_WP)
+
+    ! 3. Compute Wavenumber vector k
+    ALLOCATE(k(nf))
+    k = (2.0_WP * PI * self % Freqs) / c
+
+    ! ==================================================================
+    ! 4. COLUMNS SHIELDING CORRECTION (Cylindrical Hankel factors)
+    ! ==================================================================
+    alpha_col = alpha_hankel(k, self % col_D) ! Shape (nf)
+
+    do c_idx = 1, 3
+        m0 = self % col_members(c_idx, 1) + 1  ! Convert from 0-based to 1-based
+        m1 = self % col_members(c_idx, 2) + 1
+
+        ! First column member (all nodes)
+        do j = 1, Nn
+            global_idx = (m0 - 1) * Nn + j
+            idx = original_to_wet(global_idx)
+            if (idx >= 1) then
+                alpha_full(:, idx) = alpha_col(:)
+            end if
+        end do
+
+        ! Second column member (skip first node as it is duplicate/removed)
+        do j = 2, Nn
+            global_idx = (m1 - 1) * Nn + j
+            idx = original_to_wet(global_idx)
+            if (idx >= 1) then
+                alpha_full(:, idx) = alpha_col(:)
+            end if
+        end do
+    end do
+    DEALLOCATE(alpha_col)
+
+    ! ==================================================================
+    ! 5. PONTOONS SHIELDING CORRECTION (Equivalent diameter Hankel factors)
+    ! ==================================================================
+    ! Equivalent circular diameter based on square cross-section area
+    D_pon = 2.0_WP * sqrt((self % XsecA * self % XsecB) / PI)
+    alpha_pon = alpha_hankel(k, D_pon) ! Shape (nf)
+
+    do p_idx = 1, 3
+        m = self % pon_members(p_idx, 1) + 1  ! Convert from 0-based to 1-based
+        
+        do j = 1, Nn
+            global_idx = (m - 1) * Nn + j
+            idx = original_to_wet(global_idx)
+            if (idx >= 1) then
+                alpha_full(:, idx) = alpha_pon(:)
+            end if
+        end do
+    end do
+    DEALLOCATE(alpha_pon)
+
+    ! ==================================================================
+    ! 6. APPLY CORRECTION: F_corrected = F * abs(alpha_full)
+    ! ==================================================================
+    ALLOCATE(corrected_F(nf, Nnodes_wet, 3))
+
+    ! High-performance vectorized multiplication over spatial components
+    !$omp parallel do collapse(3) private(i, j, m)
+    do m = 1, 3
+        do j = 1, Nnodes_wet
+            do i = 1, nf
+                corrected_F(i, j, m) = self % F(i, j, m) * abs(alpha_full(i, j))
+            end do
+        end do
+    end do
+    !$omp end parallel do
+
+    ! Cleanup
+    DEALLOCATE(original_to_wet, alpha_full, k)
+
 END FUNCTION get_impedance_corrected_force_DTU10MWFloating
 
 
