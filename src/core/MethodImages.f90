@@ -83,6 +83,16 @@ SUBROUTINE init_MethodImages(self, turbines, N_images, c_wat, rho_wat, &
     ! Local variables
     CHARACTER(len=512) :: name_
 
+
+    if (PRESENT(turbines)) then
+        if (ALLOCATED(self % turbines)) DEALLOCATE(self % turbines)
+        ALLOCATE(self % turbines, source = turbines)
+    end if
+
+    if (.not. ALLOCATED(self % turbines)) then
+        error stop "MethodImages % init: No turbines defined."
+    end if
+
     ! Defaults
     if (PRESENT(N_images))          self % N_images  = N_images
     if (PRESENT(c_wat))             self % c         = c_wat
@@ -97,17 +107,14 @@ SUBROUTINE init_MethodImages(self, turbines, N_images, c_wat, rho_wat, &
     if (PRESENT(p_ref))             self % p_ref     = p_ref
     if (PRESENT(cluster))           self % cluster   = cluster
     if (PRESENT(debug))             self % debug     = debug
+
+    if (.not. PRESENT(Lower_HBC)) self % Lower_HBC = -self % turbines(1) % Depth
     
     ! Build save_path
     self % save_path = trim(self % turbines(1) % save_path) // trim(name) // ".hdf5"
     self % default_N_images = self % N_images
     
     if (self % Upper_HBC <= self % Lower_HBC) error stop "MethodImages % init: Upper_HBC must be strictly greater than Lower_HBC"
-    
-    if (PRESENT(turbines)) then
-        if (ALLOCATED(self % turbines)) DEALLOCATE(self % turbines)
-        ALLOCATE(self % turbines, source = turbines)
-    end if
     
     print*, ''
     print*, 'Selected method: ', self % get_name()

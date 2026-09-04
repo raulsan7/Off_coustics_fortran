@@ -60,6 +60,16 @@ CALL floating % init( &
 
 CALL floating % read_input(verbose=.true.)
 CALL floating % compute_force(filter_freqs=.true., verbose=.true.)
+CALL analytical_model % init(floating, debug = .true., name="plot_fl_ANM", Lower_HBC=-350.0_WP)
+! CALL acoustic_model % run_all()
+CALL analytical_model % run_spectrums(z_obs = 15.0_WP)
+CALL analytical_model % run_polar(z = -15.0_WP)
+CALL analytical_model % run_decay(z=-15.0_WP)
+CALL analytical_model % run_line()
+CALL analytical_model % run_sphere()
+CALL analytical_model % run_sliceXY(z = -15.0_WP)
+CALL analytical_model % run_sliceXZ()
+CALL analytical_model % run_cylinder()
 
 
 ! ---------- DISPLAY ELPASED TIME ---------- !

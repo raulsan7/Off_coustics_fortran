@@ -62,6 +62,16 @@ SUBROUTINE init_AnalyticalNormalModes(self, turbines, Nmodes, c_wat, rho_wat, &
     REAL(WP)           :: f_max
     INTEGER(I32)       :: m_prop, near_field_buffer
 
+
+    if (PRESENT(turbines)) then
+        if (ALLOCATED(self % turbines)) DEALLOCATE(self % turbines)
+        ALLOCATE(self % turbines, source = turbines)
+    end if
+
+    if (.not. ALLOCATED(self % turbines)) then
+        error stop "AnalyticalNormalModes % init: No turbines defined."
+    end if
+
     ! Defaults
     if (PRESENT(Nmodes))    self % Nmodes    = Nmodes
     if (PRESENT(c_wat))     self % c         = c_wat
@@ -74,20 +84,21 @@ SUBROUTINE init_AnalyticalNormalModes(self, turbines, Nmodes, c_wat, rho_wat, &
     if (PRESENT(verbose))   self % verbose   = verbose
     if (PRESENT(debug))     self % debug     = debug
 
+    if (.not. PRESENT(Lower_HBC)) self % Lower_HBC = -self % turbines(1) % Depth
+
     ! Build save path
     self % save_path = trim(self % turbines(1) % save_path) // trim(name) // ".hdf5"
     self % H = abs(self % Upper_HBC - self % Lower_HBC)
 
     if (self % Upper_HBC <= self % Lower_HBC) error stop "MethodImages % init: Upper_HBC must be strictly greater than Lower_HBC"
-    
-    if (PRESENT(turbines)) then
-        if (ALLOCATED(self % turbines)) DEALLOCATE(self % turbines)
-        ALLOCATE(self % turbines, source = turbines)
-    end if
 
-    if (.not. ALLOCATED(self % turbines)) then
-        error stop "AnalyticalNormalModes % init: No turbines defined."
-    end if
+    do i = 1, size(self % turbines)
+        if (abs(self % turbines(i) % Depth - self % H) > 1.0e-5_WP) then
+            print *, "Error: Turbine ", i, " Depth (", self % turbines(i) % Depth, &
+                     ") does not match waveguide height H (", self % H, ")!"
+            error stop "AnalyticalNormalModes % init: Inputted boundary conditions do not match system's depth"
+        end if
+    end do
 
     ! Compute default number of modes if not specified
     if ( self % Nmodes <= 0) then
